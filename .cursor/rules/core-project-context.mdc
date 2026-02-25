@@ -1,0 +1,54 @@
+---
+description: Core project context and business requirements for Himalayan Willow chatbot
+alwaysApply: true
+---
+
+# Himalayan Willow AI Chatbot - Core Context
+
+## Project Overview
+Building a conversational AI chatbot for Himalayan Willow, Nepal's leading cricket equipment retailer. This is an LLM-powered, context-aware assistant that acts as a sales assistant, customer care agent, and transaction facilitator.
+
+## Key Business Requirements
+- **Target Market**: Nepal's cricket community (youth players, club captains, parents)
+- **Core Functions**: Product discovery, recommendations, cart/checkout, order tracking, post-purchase support
+- **Payment Methods**: eSewa, Khalti, Cash on Delivery (COD)
+- **Language**: English and Nepali (Devanagari and romanized)
+- **Zero-Cost MVP**: Built entirely on free and open-source tools
+
+## Success Metrics (MVP - 90 days)
+- 100+ conversations per month
+- 10+ orders completed via chatbot
+- Customer satisfaction >= 4.0/5.0
+- Human escalation rate < 30%
+- Zero critical security incidents
+
+## Design Principles
+1. **Progressive disclosure**: Don't ask everything upfront
+2. **Cricket-native voice**: Speak like a knowledgeable cricket enthusiast
+3. **Always offer escape hatches**: Every dead-end has a 'Talk to human' option
+4. **Minimize typing**: Offer quick-reply buttons wherever possible
+5. **Fail gracefully**: Every error state has a human, helpful message
+
+## Tech Stack
+- **LLM**: Gemini Flash (free tier) with LangChain
+- **Backend**: Python FastAPI or Node.js Express (stateless)
+- **Frontend**: React chat widget
+- **Database**: PostgreSQL with vector DB (ChromaDB) for semantic search
+- **Payments**: eSewa & Khalti SDKs
+- **Hosting**: Railway/Render (free tier)
+
+## Security Requirements
+- All API communications over HTTPS/TLS 1.3
+- API keys in environment variables, never client-side
+- Payment flows handled server-side only
+- Rate limiting: 60 requests/minute per IP
+- Input sanitization to prevent prompt injection
+- Session tokens expire after 24 hours
+- Admin dashboard protected by JWT
+
+## Tone & Voice
+- Friendly but not overly casual
+- Cricket-savvy (knows terminology, understands player needs)
+- Helpful without being pushy
+- Honest about limitations (e.g., if budget is too low)
+- Uses cricket metaphors naturally but not forced

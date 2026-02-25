@@ -1,0 +1,358 @@
+---
+description: Payment gateway integration standards for eSewa and Khalti
+globs: **/payments/**/*.py,**/payments/**/*.js,**/webhooks/**/*.py,**/webhooks/**/*.js
+alwaysApply: false
+---
+
+# Payment Integration Standards
+
+## Security First Principles
+- **Never expose payment credentials client-side**
+- **All payment flows handled server-side**
+- **Verify every payment with gateway API, never trust client data**
+- **Log all payment attempts for audit trail**
+
+## eSewa Integration
+
+### Payment Initiation (Server-Side)
+```python
+# ✅ GOOD - Server-side signed payment request
+import hmac
+import hashlib
+from datetime import datetime
+
+def generate_esewa_payment(order_id: str, amount: float, user_email: str):
+    """Generate signed eSewa payment request"""
+    
+    # Validate amount server-side
+    if amount <= 0:
+        raise ValueError("Invalid payment amount")
+    
+    # Create signature
+    message = f"total_amount={amount},transaction_uuid={order_id},product_code={ESEWA_MERCHANT_ID}"
+    signature = hmac.new(
+        ESEWA_SECRET_KEY.encode(),
+        message.encode(),
+        hashlib.sha256
+    ).hexdigest()
+    
+    payment_data = {
+        "amount": amount,
+        "tax_amount": 0,
+        "total_amount": amount,
+        "transaction_uuid": order_id,
+        "product_code": ESEWA_MERCHANT_ID,
+        "product_service_charge": 0,
+        "product_delivery_charge": 0,
+        "success_url": f"{BASE_URL}/api/payments/esewa/success",
+        "failure_url": f"{BASE_URL}/api/payments/esewa/failure",
+        "signed_field_names": "total_amount,transaction_uuid,product_code",
+        "signature": signature
+    }
+    
+    # Log payment initiation
+    logger.info(
+        "esewa_payment_initiated",
+        order_id=order_id,
+        amount=amount,
+        timestamp=datetime.utcnow().isoformat()
+    )
+    
+    return payment_data
+
+# ❌ BAD - Client-side payment, no signature
+def create_payment(amount):
+    return {"amount": amount, "merchant_id": ESEWA_MERCHANT_ID}
+```
+
+### Payment Verification (Webhook)
+```python
+# ✅ GOOD - Verify payment with eSewa API
+import httpx
+
+async def verify_esewa_payment(
+    order_id: str,
+    amount: float,
+    refId: str
+) -> bool:
+    """Verify payment with eSewa verification API"""
+    
+    verification_url = f"{ESEWA_BASE_URL}/api/epay/transaction/status/"
+    
+    params = {
+        "product_code": ESEWA_MERCHANT_ID,
+        "total_amount": amount,
+        "transaction_uuid": order_id
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                verification_url,
+                params=params,
+                timeout=10.0
+            )
+            
+            if response.status_code != 200:
+                logger.error(
+                    "esewa_verification_failed",
+                    order_id=order_id,
+                    status_code=response.status_code
+                )
+                return False
+            
+            data = response.json()
+            
+            # Verify transaction status
+            if data.get("status") == "COMPLETE" and data.get("refId") == refId:
+                logger.info(
+                    "esewa_payment_verified",
+                    order_id=order_id,
+                    ref_id=refId
+                )
+                return True
+            
+            return False
+            
+    except httpx.TimeoutException:
+        logger.error("esewa_verification_timeout", order_id=order_id)
+        return False
+
+# ❌ BAD - Trust client data without verification
+def verify_payment(order_id):
+    return True  # Never do this!
+```
+
+## Khalti Integration
+
+### Payment Initiation
+```python
+# ✅ GOOD - Khalti payment with proper headers
+async def initiate_khalti_payment(
+    order_id: str,
+    amount: int,  # Khalti expects amount in paisa (1 NPR = 100 paisa)
+    product_name: str,
+    customer_info: dict
+) -> dict:
+    """Initiate Khalti payment"""
+    
+    # Amount must be in paisa
+    if amount < 1000:  # Minimum NPR 10
+        raise ValueError("Amount too low for Khalti payment")
+    
+    payload = {
+        "return_url": f"{BASE_URL}/api/payments/khalti/callback",
+        "website_url": BASE_URL,
+        "amount": amount,
+        "purchase_order_id": order_id,
+        "purchase_order_name": product_name,
+        "customer_info": {
+            "name": customer_info.get("name"),
+            "email": customer_info.get("email"),
+            "phone": customer_info.get("phone")
+        }
+    }
+    
+    headers = {
+        "Authorization": f"Key {KHALTI_SECRET_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{KHALTI_BASE_URL}/api/v2/epayment/initiate/",
+            json=payload,
+            headers=headers,
+            timeout=10.0
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            logger.info(
+                "khalti_payment_initiated",
+                order_id=order_id,
+                pidx=data.get("pidx")
+            )
+            return data
+        else:
+            logger.error(
+                "khalti_initiation_failed",
+                order_id=order_id,
+                status_code=response.status_code
+            )
+            raise Exception("Khalti payment initiation failed")
+```
+
+### Payment Verification
+```python
+# ✅ GOOD - Verify Khalti payment with lookup API
+async def verify_khalti_payment(pidx: str) -> dict:
+    """Verify Khalti payment status"""
+    
+    headers = {
+        "Authorization": f"Key {KHALTI_SECRET_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {"pidx": pidx}
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            f"{KHALTI_BASE_URL}/api/v2/epayment/lookup/",
+            json=payload,
+            headers=headers,
+            timeout=10.0
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if data.get("status") == "Completed":
+                logger.info(
+                    "khalti_payment_verified",
+                    pidx=pidx,
+                    transaction_id=data.get("transaction_id")
+                )
+                return data
+            else:
+                logger.warning(
+                    "khalti_payment_incomplete",
+                    pidx=pidx,
+                    status=data.get("status")
+                )
+                return None
+        
+        return None
+```
+
+## Cash on Delivery (COD)
+
+```python
+# ✅ GOOD - COD order creation with validation
+async def create_cod_order(
+    order_id: str,
+    cart_items: list,
+    delivery_address: dict,
+    customer_phone: str
+) -> dict:
+    """Create COD order with proper validation"""
+    
+    # Validate delivery address
+    required_fields = ["street", "city", "postal_code"]
+    if not all(field in delivery_address for field in required_fields):
+        raise ValueError("Incomplete delivery address")
+    
+    # Calculate total from DB, not from client
+    total_amount = await calculate_order_total(cart_items)
+    
+    # COD limit check (e.g., max NPR 50,000)
+    if total_amount > 50000:
+        raise ValueError("COD not available for orders above NPR 50,000")
+    
+    order = {
+        "order_id": order_id,
+        "payment_method": "COD",
+        "status": "PENDING_CONFIRMATION",
+        "total_amount": total_amount,
+        "delivery_address": delivery_address,
+        "customer_phone": customer_phone,
+        "created_at": datetime.utcnow()
+    }
+    
+    # Save to database
+    await db.orders.insert_one(order)
+    
+    # Notify store team via Telegram
+    await send_telegram_notification(
+        f"🆕 New COD Order\nOrder ID: {order_id}\nAmount: NPR {total_amount}\nPhone: {customer_phone}"
+    )
+    
+    logger.info("cod_order_created", order_id=order_id, amount=total_amount)
+    
+    return order
+```
+
+## Payment Timeout Handling
+
+```python
+# ✅ GOOD - Graceful timeout handling
+async def process_payment_with_timeout(
+    payment_method: str,
+    payment_data: dict
+) -> dict:
+    """Process payment with timeout fallback"""
+    
+    try:
+        if payment_method == "esewa":
+            result = await asyncio.wait_for(
+                initiate_esewa_payment(**payment_data),
+                timeout=10.0
+            )
+        elif payment_method == "khalti":
+            result = await asyncio.wait_for(
+                initiate_khalti_payment(**payment_data),
+                timeout=10.0
+            )
+        else:
+            raise ValueError(f"Unknown payment method: {payment_method}")
+        
+        return {"success": True, "data": result}
+        
+    except asyncio.TimeoutError:
+        logger.error(
+            "payment_gateway_timeout",
+            method=payment_method,
+            order_id=payment_data.get("order_id")
+        )
+        return {
+            "success": False,
+            "error": "TIMEOUT",
+            "message": "Payment gateway is taking longer than expected. Please try again.",
+            "retry_available": True
+        }
+```
+
+## Webhook Security
+
+```python
+# ✅ GOOD - Secure webhook endpoint
+from fastapi import Request, HTTPException
+import hmac
+
+@app.post("/api/webhooks/esewa")
+async def esewa_webhook(request: Request):
+    """Secure eSewa webhook handler"""
+    
+    # Verify webhook signature
+    signature = request.headers.get("X-eSewa-Signature")
+    if not signature:
+        raise HTTPException(status_code=401, detail="Missing signature")
+    
+    body = await request.body()
+    expected_signature = hmac.new(
+        ESEWA_WEBHOOK_SECRET.encode(),
+        body,
+        hashlib.sha256
+    ).hexdigest()
+    
+    if not hmac.compare_digest(signature, expected_signature):
+        logger.warning("esewa_webhook_invalid_signature")
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    
+    # Process webhook
+    data = await request.json()
+    order_id = data.get("transaction_uuid")
+    
+    # Verify payment independently
+    is_valid = await verify_esewa_payment(
+        order_id,
+        data.get("total_amount"),
+        data.get("refId")
+    )
+    
+    if is_valid:
+        await mark_order_as_paid(order_id)
+        return {"status": "success"}
+    
+    return {"status": "verification_failed"}
+```

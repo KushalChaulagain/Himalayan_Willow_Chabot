@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply font-sans antialiased;
+  }
+}
+
+@layer components {
+  .chat-widget-container {
+    @apply fixed bottom-5 right-5 z-50;
+  }
+
+  @media (max-width: 768px) {
+    .chat-widget-container {
+      @apply bottom-0 right-0 w-full h-full;
+    }
+  }
+}

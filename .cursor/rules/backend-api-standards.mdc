@@ -1,0 +1,187 @@
+---
+description: Backend API development standards for Himalayan Willow chatbot
+globs: **/*.py,**/api/**/*.js,**/routes/**/*.js,**/controllers/**/*.js
+alwaysApply: false
+---
+
+# Backend API Standards
+
+## Architecture Principles
+- **Stateless API**: Each request self-contained; conversation history passed as context
+- **Tool-calling pattern**: LLM calls backend tools (search_products, create_order, track_order)
+- **Multi-tenant ready**: All DB tables include `store_id` for future SaaS scaling
+
+## API Design
+
+### Endpoint Structure
+```python
+# ✅ GOOD - RESTful, clear intent
+POST /api/chat/message
+POST /api/orders/create
+GET /api/orders/{order_id}/status
+POST /api/payments/esewa/initiate
+POST /api/payments/khalti/verify
+
+# ❌ BAD - Vague, non-standard
+POST /api/chat
+POST /api/order
+GET /api/status
+```
+
+### Request/Response Format
+```python
+# ✅ GOOD - Consistent structure
+{
+  "success": true,
+  "data": {...},
+  "error": null,
+  "timestamp": "2026-02-25T10:30:00Z"
+}
+
+# ❌ BAD - Inconsistent, missing metadata
+{
+  "result": {...}
+}
+```
+
+## Error Handling
+
+```python
+# ✅ GOOD - Structured error with context
+from fastapi import HTTPException
+
+try:
+    result = await search_products(query)
+except DatabaseError as e:
+    logger.error(f"Product search failed: {e}", extra={"query": query})
+    raise HTTPException(
+        status_code=500,
+        detail={
+            "error": "PRODUCT_SEARCH_FAILED",
+            "message": "Unable to search products right now",
+            "retry_after": 30
+        }
+    )
+
+# ❌ BAD - Silent failure or generic error
+try:
+    result = await search_products(query)
+except:
+    return {"error": "Something went wrong"}
+```
+
+## LLM Integration
+
+### Tool Definition Pattern
+```python
+# ✅ GOOD - Clear schema with validation
+tools = [
+    {
+        "name": "search_products",
+        "description": "Search cricket products by category, price, and specifications",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "category": {"type": "string", "enum": ["bat", "ball", "gloves", "pads"]},
+                "max_price": {"type": "number", "minimum": 0},
+                "min_rating": {"type": "number", "minimum": 0, "maximum": 5}
+            },
+            "required": ["category"]
+        }
+    }
+]
+```
+
+### Timeout Handling
+```python
+# ✅ GOOD - Fallback for LLM timeout
+import asyncio
+
+try:
+    response = await asyncio.wait_for(
+        llm.generate(prompt, context),
+        timeout=8.0
+    )
+except asyncio.TimeoutError:
+    return {
+        "message": "I'm having trouble thinking right now — here are quick links to our most popular products",
+        "quick_links": get_popular_products()
+    }
+```
+
+## Database Queries
+
+```python
+# ✅ GOOD - Parameterized, with connection pooling
+async def get_product_by_id(product_id: int, store_id: int):
+    async with db_pool.acquire() as conn:
+        result = await conn.fetchrow(
+            "SELECT * FROM products WHERE id = $1 AND store_id = $2 AND in_stock = true",
+            product_id, store_id
+        )
+        return result
+
+# ❌ BAD - SQL injection risk, no store isolation
+def get_product(product_id):
+    query = f"SELECT * FROM products WHERE id = {product_id}"
+    return db.execute(query)
+```
+
+## Rate Limiting
+
+```python
+# ✅ GOOD - IP-based rate limiting
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+
+@app.post("/api/chat/message")
+@limiter.limit("60/minute")
+async def chat_message(request: Request):
+    # Handle message
+    pass
+```
+
+## Logging
+
+```python
+# ✅ GOOD - Structured logging with context
+import structlog
+
+logger = structlog.get_logger()
+
+logger.info(
+    "order_created",
+    order_id=order.id,
+    user_id=user.id,
+    total_amount=order.total,
+    payment_method=order.payment_method
+)
+
+# ❌ BAD - Unstructured, hard to query
+print(f"Order {order.id} created for user {user.id}")
+```
+
+## Environment Configuration
+
+```python
+# ✅ GOOD - Type-safe config with validation
+from pydantic import BaseSettings
+
+class Settings(BaseSettings):
+    gemini_api_key: str
+    esewa_merchant_id: str
+    database_url: str
+    jwt_secret: str
+    
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+
+settings = Settings()
+
+# ❌ BAD - Direct os.getenv without validation
+import os
+api_key = os.getenv("API_KEY")  # Could be None!
+```

@@ -1,0 +1,289 @@
+---
+description: Frontend chat widget development standards for React components
+globs: **/*.tsx,**/*.jsx,**/components/**/*.js,**/hooks/**/*.js
+alwaysApply: false
+---
+
+# Frontend Chat Widget Standards
+
+## Component Architecture
+- **Mobile-first**: Design for 320px minimum width
+- **Keyboard navigable**: Tab focus, Enter to send
+- **Progressive enhancement**: Works without JavaScript for basic form fallback
+
+## Component Structure
+
+```tsx
+// ✅ GOOD - Functional component with clear props
+interface ChatMessageProps {
+  message: string;
+  sender: 'user' | 'bot';
+  timestamp: Date;
+  productCards?: ProductCard[];
+  quickReplies?: string[];
+}
+
+export const ChatMessage: React.FC<ChatMessageProps> = ({
+  message,
+  sender,
+  timestamp,
+  productCards,
+  quickReplies
+}) => {
+  return (
+    <div className={`message message-${sender}`} role="article">
+      <p>{message}</p>
+      {productCards && <ProductCardList cards={productCards} />}
+      {quickReplies && <QuickReplyButtons options={quickReplies} />}
+    </div>
+  );
+};
+
+// ❌ BAD - Unclear props, no accessibility
+function Message(props) {
+  return <div>{props.msg}</div>;
+}
+```
+
+## State Management
+
+```tsx
+// ✅ GOOD - Context for chat state
+interface ChatContextType {
+  messages: Message[];
+  isTyping: boolean;
+  sendMessage: (text: string) => Promise<void>;
+  addToCart: (productId: string) => void;
+  sessionId: string;
+}
+
+export const ChatContext = createContext<ChatContextType | undefined>(undefined);
+
+export const useChatContext = () => {
+  const context = useContext(ChatContext);
+  if (!context) {
+    throw new Error('useChatContext must be used within ChatProvider');
+  }
+  return context;
+};
+
+// ❌ BAD - Prop drilling, no type safety
+function ChatWidget() {
+  const [messages, setMessages] = useState([]);
+  return <ChatWindow messages={messages} setMessages={setMessages} />;
+}
+```
+
+## API Communication
+
+```tsx
+// ✅ GOOD - Typed API client with error handling
+interface ChatResponse {
+  message: string;
+  productCards?: ProductCard[];
+  quickReplies?: string[];
+  action?: 'add_to_cart' | 'checkout' | 'escalate';
+}
+
+const sendChatMessage = async (
+  message: string,
+  sessionId: string
+): Promise<ChatResponse> => {
+  try {
+    const response = await fetch('/api/chat/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, session_id: sessionId })
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Chat API error:', error);
+    return {
+      message: "I'm having trouble connecting. Please try again in a moment.",
+      quickReplies: ['Retry', 'Talk to human']
+    };
+  }
+};
+
+// ❌ BAD - No error handling, no types
+async function sendMessage(msg) {
+  const res = await fetch('/api/chat', { body: msg });
+  return res.json();
+}
+```
+
+## Real-time Typing Effect
+
+```tsx
+// ✅ GOOD - Server-Sent Events for streaming
+const useStreamingMessage = (sessionId: string) => {
+  const [streamedText, setStreamedText] = useState('');
+  
+  useEffect(() => {
+    const eventSource = new EventSource(`/api/chat/stream/${sessionId}`);
+    
+    eventSource.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      setStreamedText(prev => prev + data.chunk);
+    };
+    
+    eventSource.onerror = () => {
+      eventSource.close();
+    };
+    
+    return () => eventSource.close();
+  }, [sessionId]);
+  
+  return streamedText;
+};
+```
+
+## Accessibility
+
+```tsx
+// ✅ GOOD - Accessible chat input
+<div className="chat-input-container">
+  <label htmlFor="chat-input" className="sr-only">
+    Type your message
+  </label>
+  <input
+    id="chat-input"
+    type="text"
+    placeholder="Ask me about cricket gear..."
+    value={inputText}
+    onChange={(e) => setInputText(e.target.value)}
+    onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+    aria-label="Chat message input"
+    aria-describedby="chat-help-text"
+  />
+  <button
+    onClick={handleSend}
+    disabled={!inputText.trim()}
+    aria-label="Send message"
+  >
+    Send
+  </button>
+</div>
+
+// ❌ BAD - No labels, no keyboard support
+<input onChange={onChange} />
+<div onClick={send}>Send</div>
+```
+
+## Product Cards
+
+```tsx
+// ✅ GOOD - Structured product card with actions
+interface ProductCardProps {
+  id: string;
+  name: string;
+  price: number;
+  imageUrl: string;
+  reason: string; // Why this product fits the user
+  inStock: boolean;
+}
+
+export const ProductCard: React.FC<ProductCardProps> = ({
+  id, name, price, imageUrl, reason, inStock
+}) => {
+  const { addToCart } = useChatContext();
+  
+  return (
+    <article className="product-card" aria-label={`Product: ${name}`}>
+      <img src={imageUrl} alt={name} loading="lazy" />
+      <h3>{name}</h3>
+      <p className="price">NPR {price.toLocaleString()}</p>
+      <p className="reason">{reason}</p>
+      {inStock ? (
+        <button onClick={() => addToCart(id)}>Add to Cart</button>
+      ) : (
+        <span className="out-of-stock">Out of Stock</span>
+      )}
+    </article>
+  );
+};
+```
+
+## Quick Reply Buttons
+
+```tsx
+// ✅ GOOD - Keyboard navigable quick replies
+interface QuickReplyProps {
+  options: string[];
+  onSelect: (option: string) => void;
+}
+
+export const QuickReplyButtons: React.FC<QuickReplyProps> = ({
+  options,
+  onSelect
+}) => {
+  return (
+    <div className="quick-replies" role="group" aria-label="Quick reply options">
+      {options.map((option, index) => (
+        <button
+          key={index}
+          onClick={() => onSelect(option)}
+          className="quick-reply-btn"
+          tabIndex={0}
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  );
+};
+```
+
+## Mobile Responsiveness
+
+```css
+/* ✅ GOOD - Mobile-first responsive design */
+.chat-widget {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 350px;
+  max-height: 600px;
+}
+
+@media (max-width: 768px) {
+  .chat-widget {
+    width: 100vw;
+    height: 100vh;
+    bottom: 0;
+    right: 0;
+    border-radius: 0;
+  }
+}
+
+@media (min-width: 320px) and (max-width: 480px) {
+  .product-card {
+    flex-direction: column;
+  }
+}
+```
+
+## Performance
+
+```tsx
+// ✅ GOOD - Memoized components, lazy loading
+import { memo, lazy, Suspense } from 'react';
+
+const ProductCardList = memo(({ cards }: { cards: ProductCard[] }) => (
+  <div className="product-cards">
+    {cards.map(card => <ProductCard key={card.id} {...card} />)}
+  </div>
+));
+
+const PaymentModal = lazy(() => import('./PaymentModal'));
+
+// Usage
+<Suspense fallback={<LoadingSpinner />}>
+  <PaymentModal />
+</Suspense>
+```
