@@ -9,6 +9,7 @@ from datetime import datetime
 
 from app.config import settings
 from app.db.database import db
+from app.db.database import DatabaseUnavailableError
 from app.routes import chat, orders, payments
 
 # Configure structured logging
@@ -104,14 +105,43 @@ async def api_health_check():
 
 
 # Error handlers
+@app.exception_handler(DatabaseUnavailableError)
+async def database_unavailable_handler(request: Request, exc: DatabaseUnavailableError):
+    """Return 503 when an endpoint needs the database but it is not available."""
+    logger.warning("database_unavailable_request", path=request.url.path)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "success": False,
+            "error": "SERVICE_UNAVAILABLE",
+            "message": "Database is not configured or unavailable. Set DATABASE_URL in .env for orders and persistence.",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    )
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler"""
+    import traceback
+    
+    # Print to stdout for debugging
+    if settings.environment == "development":
+        print(f"\n{'='*60}")
+        print(f"UNHANDLED EXCEPTION in {request.method} {request.url.path}")
+        print(f"Error Type: {type(exc).__name__}")
+        print(f"Error Message: {str(exc)}")
+        print(f"Traceback:")
+        traceback.print_exc()
+        print(f"{'='*60}\n")
+    
     logger.error(
         "unhandled_exception",
         error=str(exc),
+        error_type=type(exc).__name__,
         path=request.url.path,
-        method=request.method
+        method=request.method,
+        traceback=traceback.format_exc() if settings.environment == "development" else None
     )
     
     return JSONResponse(
@@ -120,6 +150,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             "success": False,
             "error": "INTERNAL_SERVER_ERROR",
             "message": "An unexpected error occurred",
+            "detail": str(exc) if settings.environment == "development" else None,
             "timestamp": datetime.utcnow().isoformat()
         }
     )
@@ -127,7 +158,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database connection on startup"""
+    """Initialize database connection on startup (optional if DATABASE_URL not set or invalid)."""
     await db.connect()
     logger.info("application_started")
 

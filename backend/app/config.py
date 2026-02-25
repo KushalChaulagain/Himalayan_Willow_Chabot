@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     # LLM Configuration
     gemini_api_key: str
     
-    # Database
-    database_url: str
+    # Database (optional: leave empty to run without PostgreSQL; chat will work, orders/persistence will return 503)
+    database_url: str = ""
     
     # Payment Gateways
     esewa_merchant_id: str = ""
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     
     # Application
     base_url: str = "http://localhost:8000"
-    cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000"
     jwt_secret: str
     environment: str = "development"
     

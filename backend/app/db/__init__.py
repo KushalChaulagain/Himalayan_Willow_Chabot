@@ -1,3 +1,3 @@
-from app.db.database import Database, get_db
+from app.db.database import Database, DatabaseUnavailableError, get_db
 
-__all__ = ["Database", "get_db"]
+__all__ = ["Database", "DatabaseUnavailableError", "get_db"]

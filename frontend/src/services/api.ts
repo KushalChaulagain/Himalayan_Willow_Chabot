@@ -9,7 +9,7 @@ class APIClient {
 
   async sendMessage(message: string, sessionId?: string): Promise<ChatResponse> {
     try {
-      const response = await fetch(`${this.baseUrl}/api/chat/message`, {
+      const response = await fetch(`/api/chat/message`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -27,8 +27,17 @@ class APIClient {
       return await response.json();
     } catch (error) {
       console.error('Chat API error:', error);
+      const isNetworkError =
+        error instanceof TypeError &&
+        (error.message === 'Failed to fetch' || error.message?.includes('fetch'));
+      const isDev =
+        this.baseUrl.includes('localhost') || this.baseUrl.includes('127.0.0.1');
+      const message =
+        isNetworkError
+          ? `Cannot reach the server. Please check your connection and try again.`
+          : "I'm having trouble connecting. Please try again in a moment.";
       return {
-        message: "I'm having trouble connecting. Please try again in a moment.",
+        message,
         quick_replies: ['Retry', 'Talk to human'],
         session_id: sessionId || '',
       };
@@ -37,7 +46,7 @@ class APIClient {
 
   async createSession(): Promise<{ session_id: string }> {
     try {
-      const response = await fetch(`${this.baseUrl}/api/chat/session`, {
+      const response = await fetch(`/api/chat/session`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -3,12 +3,31 @@ import re
 from typing import Optional, Dict, List
 import structlog
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain.memory import ConversationSummaryBufferMemory
-from langchain.schema import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
 
 from app.config import settings
 
 logger = structlog.get_logger()
+
+# In-process conversation buffer (replaces ConversationSummaryBufferMemory for LangChain 0.3 compatibility)
+MAX_HISTORY_MESSAGES = 20  # last N messages per session
+
+
+class SessionMessageBuffer:
+    """Simple per-session message buffer compatible with our LLM flow."""
+
+    def __init__(self, max_messages: int = MAX_HISTORY_MESSAGES):
+        self._messages: List[BaseMessage] = []
+        self._max = max_messages
+
+    def load_memory_variables(self, _: Dict) -> Dict[str, List[BaseMessage]]:
+        return {"history": list(self._messages)}
+
+    def save_context(self, input_dict: Dict, output_dict: Dict) -> None:
+        self._messages.append(HumanMessage(content=input_dict.get("input", "")))
+        self._messages.append(AIMessage(content=output_dict.get("output", "")))
+        while len(self._messages) > self._max:
+            self._messages.pop(0)
 
 # System prompt with cricket domain knowledge
 SYSTEM_PROMPT = """You are a helpful sales assistant for Himalayan Willow, Nepal's leading cricket equipment store.
@@ -82,21 +101,17 @@ class LLMService:
     
     def __init__(self):
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             google_api_key=settings.gemini_api_key,
             temperature=0.7,
             max_tokens=1000
         )
-        self.memories: Dict[str, ConversationSummaryBufferMemory] = {}
-    
-    def _get_memory(self, session_id: str) -> ConversationSummaryBufferMemory:
+        self.memories: Dict[str, SessionMessageBuffer] = {}
+
+    def _get_memory(self, session_id: str) -> SessionMessageBuffer:
         """Get or create conversation memory for session"""
         if session_id not in self.memories:
-            self.memories[session_id] = ConversationSummaryBufferMemory(
-                llm=self.llm,
-                max_token_limit=1000,
-                return_messages=True
-            )
+            self.memories[session_id] = SessionMessageBuffer()
         return self.memories[session_id]
     
     def _sanitize_input(self, user_message: str) -> str:
@@ -196,7 +211,19 @@ class LLMService:
             return self._get_fallback_response()
         
         except Exception as e:
-            logger.error("llm_error", error=str(e), session_id=session_id)
+            error_str = str(e).lower()
+            error_type = type(e).__name__
+            
+            # Categorize error for better logging
+            if "api key" in error_str or "authentication" in error_str or "unauthorized" in error_str:
+                logger.error("gemini_api_auth_error", error=str(e), error_type=error_type, session_id=session_id)
+            elif "quota" in error_str or "rate limit" in error_str or "resource_exhausted" in error_str:
+                logger.error("gemini_api_quota_error", error=str(e), error_type=error_type, session_id=session_id)
+            elif "not_found" in error_str or "404" in error_str:
+                logger.error("gemini_api_model_not_found", error=str(e), error_type=error_type, session_id=session_id)
+            else:
+                logger.error("gemini_api_unknown_error", error=str(e), error_type=error_type, session_id=session_id)
+            
             return self._get_fallback_response()
     
     def _get_fallback_response(self) -> Dict:

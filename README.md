@@ -113,6 +113,15 @@ Frontend will be available at `http://localhost:5173`
 
 ## Development
 
+### Running locally
+
+The chat widget needs **both** the backend and frontend running:
+
+- **Terminal 1 – Backend:** From the project root, run `cd backend` then `uvicorn app.main:app --reload --port 8000`. The API will be at `http://localhost:8000`.
+- **Terminal 2 – Frontend:** From the project root, run `cd frontend` then `npm run dev`. The app will be at `http://localhost:5173`.
+
+The widget calls the API at `http://localhost:8000` by default. To use a different API URL, set `VITE_API_URL` in `frontend/.env` (e.g. `VITE_API_URL=http://localhost:8000`).
+
 ### Running Tests
 
 Backend:

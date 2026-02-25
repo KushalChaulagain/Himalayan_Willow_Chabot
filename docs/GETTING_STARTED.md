@@ -92,6 +92,8 @@ Frontend will be available at `http://localhost:5173`
 
 Open `http://localhost:5173` in your browser. You should see a chat widget button in the bottom-right corner. Click it and start chatting!
 
+**Running locally:** You need both processes at once. Use two terminals: one for the backend (`cd backend && uvicorn app.main:app --reload`) and one for the frontend (`cd frontend && npm run dev`). The chat widget expects the API at `http://localhost:8000` by default (or set `VITE_API_URL` in frontend `.env`). If you see "Failed to fetch" or "Cannot reach the server", ensure the backend is running on port 8000.
+
 ## Configuration
 
 ### Environment Variables
