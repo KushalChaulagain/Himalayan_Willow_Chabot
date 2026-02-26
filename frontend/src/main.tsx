@@ -16,7 +16,7 @@ if (import.meta.env.DEV) {
 }
 
 // For production embedding
-export function init(config: { apiUrl: string; storeId: number }) {
+export function init(_config: { apiUrl: string; storeId: number }) {
   const container = document.createElement('div');
   container.id = 'himalayan-willow-chat';
   document.body.appendChild(container);

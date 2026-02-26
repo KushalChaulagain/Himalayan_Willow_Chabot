@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     
     # LLM Configuration
     gemini_api_key: str
+    groq_api_key: str = ""  # Fallback LLM; leave empty to disable Groq fallback
     
     # Database (optional: leave empty to run without PostgreSQL; chat will work, orders/persistence will return 503)
     database_url: str = ""
@@ -23,6 +24,9 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
     resend_api_key: str = ""
     
+    # Auth (Google OAuth)
+    google_client_id: str = ""  # OAuth 2.0 Web client ID from Google Cloud Console
+
     # Application
     base_url: str = "http://localhost:8000"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000"
@@ -32,6 +36,12 @@ class Settings(BaseSettings):
     # Store Configuration
     store_id: int = 1
     store_name: str = "Himalayan Willow"
+    store_maps_url: str = "https://maps.app.goo.gl/WiWrohWFkAWWHput8"
+    store_phone: str = ""
+    
+    # Monitoring & Observability
+    sentry_dsn: str = ""  # Optional: Sentry DSN for error tracking
+    enable_sentry: bool = False
     
     @property
     def cors_origins_list(self) -> List[str]:

@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
-from typing import Optional, Dict
+import json as _json
+from pydantic import BaseModel, Field, field_validator
+from typing import Optional, Dict, Any
 from datetime import datetime
 
 
@@ -20,8 +21,17 @@ class Product(BaseModel):
     review_count: int = 0
     sales_count: int = 0
     image_url: Optional[str] = None
-    specifications: Dict = Field(default_factory=dict)
+    specifications: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    @field_validator("specifications", mode="before")
+    @classmethod
+    def parse_specifications(cls, v: Any) -> Dict[str, Any]:
+        if isinstance(v, str):
+            return _json.loads(v)
+        if v is None:
+            return {}
+        return v
 
 
 class ProductCard(BaseModel):
@@ -30,6 +40,9 @@ class ProductCard(BaseModel):
     name: str
     price: float
     image_url: Optional[str] = None
+    images: Optional[list] = None
+    audio_url: Optional[str] = None
+    is_premium: bool = False
     reason: str
     in_stock: bool = True
     specifications: Optional[Dict] = None

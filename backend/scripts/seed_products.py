@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -369,7 +370,7 @@ async def seed_products():
                 product["review_count"],
                 product["sales_count"],
                 product["image_url"],
-                product["specifications"]
+                json.dumps(product["specifications"])
             )
             print(f"✓ Inserted: {product['name']}")
         except Exception as e:

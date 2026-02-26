@@ -63,6 +63,63 @@ async def get_order(
     }
 
 
+@router.get("/{order_id}/tracking")
+async def get_order_tracking(
+    order_id: str,
+    db: Database = Depends(get_db)
+):
+    """Get order tracking stages for the visual tracking map."""
+    order_service = OrderService(db)
+    order = await order_service.get_order_by_id(order_id)
+
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    status_val = order.status.value if hasattr(order.status, 'value') else str(order.status)
+
+    all_stages = [
+        {"id": "placed", "label": "Order Placed", "icon": "📋"},
+        {"id": "confirmed", "label": "Confirmed", "icon": "✅"},
+        {"id": "processing", "label": "Processing", "icon": "⚙️"},
+        {"id": "dispatched", "label": "Dispatched", "icon": "🚚"},
+        {"id": "out_for_delivery", "label": "Out for Delivery", "icon": "📦"},
+        {"id": "delivered", "label": "Delivered", "icon": "🏠"},
+    ]
+
+    status_order = {s["id"]: i for i, s in enumerate(all_stages)}
+    status_map = {
+        "PENDING": "placed",
+        "CONFIRMED": "confirmed",
+        "PROCESSING": "processing",
+        "DISPATCHED": "dispatched",
+        "OUT_FOR_DELIVERY": "out_for_delivery",
+        "DELIVERED": "delivered",
+    }
+    current_stage_id = status_map.get(status_val.upper(), "placed")
+    current_idx = status_order.get(current_stage_id, 0)
+
+    stages = []
+    for i, stage in enumerate(all_stages):
+        stages.append({
+            **stage,
+            "completed": i < current_idx,
+            "current": i == current_idx,
+            "timestamp": order.created_at.isoformat() if i <= current_idx else None,
+        })
+
+    destination = ""
+    if order.delivery_address and isinstance(order.delivery_address, dict):
+        destination = order.delivery_address.get("city", "")
+
+    return {
+        "order_id": order.order_id,
+        "status": status_val,
+        "stages": stages,
+        "destination_city": destination,
+        "estimated_delivery": None,
+    }
+
+
 @router.post("/track")
 async def track_order(
     request: OrderTrackRequest,

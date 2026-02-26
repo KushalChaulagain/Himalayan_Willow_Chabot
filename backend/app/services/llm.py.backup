@@ -1,0 +1,342 @@
+import asyncio
+import re
+import json
+from typing import Optional, Dict, List, Tuple
+import structlog
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
+
+from app.config import settings
+from app.utils.retry import retry_on_api_error
+from app.utils.circuit_breaker import llm_circuit_breaker, CircuitBreakerError
+
+logger = structlog.get_logger()
+
+# In-process conversation buffer (replaces ConversationSummaryBufferMemory for LangChain 0.3 compatibility)
+MAX_HISTORY_MESSAGES = 20  # last N messages per session
+
+
+class SessionMessageBuffer:
+    """Simple per-session message buffer compatible with our LLM flow."""
+
+    def __init__(self, max_messages: int = MAX_HISTORY_MESSAGES):
+        self._messages: List[BaseMessage] = []
+        self._max = max_messages
+
+    def load_memory_variables(self, _: Dict) -> Dict[str, List[BaseMessage]]:
+        return {"history": list(self._messages)}
+
+    def save_context(self, input_dict: Dict, output_dict: Dict) -> None:
+        self._messages.append(HumanMessage(content=input_dict.get("input", "")))
+        self._messages.append(AIMessage(content=output_dict.get("output", "")))
+        while len(self._messages) > self._max:
+            self._messages.pop(0)
+
+# Enhanced system prompt with cricket domain knowledge and ambiguity handling
+SYSTEM_PROMPT = """You are “Himalayan Willow”, a sales assistant for a cricket equipment store in Nepal.
+
+PRIMARY GOAL
+Convert chat into purchases by showing real products quickly, with photos and prices, and guiding to checkout.
+
+HARD RULES (must follow)
+1) Never invent products, prices, stock, discounts, or policies.
+2) If the user asks to “show/see/recommend/options/products” or taps a category button, you MUST show product results immediately.
+3) Product results must come ONLY from the catalog tool (database). If the tool returns 0 items, say you can’t find products right now and offer categories + “talk to human”.
+4) Keep responses concise: max 6 product suggestions per message.
+5) Always include quick replies for next steps.
+
+TOOLS YOU CAN USE
+- search_products(category, max_price, min_price, limit, query): returns a list of products with {id, name, price_npr, image_url, stock, short_desc, category, brand}.
+- get_product_details(product_id)
+- add_to_cart(product_id, qty)
+- create_order(payment_method, delivery_city, phone, address)
+- track_order(order_id)
+
+HOW TO RESPOND
+- If user intent is to browse products: call search_products first, then respond.
+- Show products in 3 tiers when budget is unknown: “Budget”, “Best value”, “Premium” (2 items each).
+- After showing products, ask at most 2 short questions to refine (budget range, leather vs tennis ball, size).
+- Use simple English or Roman Nepali depending on user style.
+
+OUTPUT FORMAT (strict JSON only)
+Return ONLY valid JSON matching this schema:
+{
+  "message_md": "short markdown text shown in chat",
+  "product_cards": [
+    {"id":"", "name":"", "price_npr":0, "image_url":"", "short_desc":"", "category":""}
+  ],
+  "quick_replies": ["...","...","..."],
+  "clarifying_questions": ["...","..."]
+}"
+"""
+
+
+class LLMService:
+    """LLM service for chatbot interactions"""
+    
+    def __init__(self):
+        self.llm = ChatGoogleGenerativeAI(
+            model="gemini-2.5-flash",
+            google_api_key=settings.gemini_api_key,
+            temperature=0.7,
+            max_tokens=1000
+        )
+        self.memories: Dict[str, SessionMessageBuffer] = {}
+
+    def _get_memory(self, session_id: str) -> SessionMessageBuffer:
+        """Get or create conversation memory for session"""
+        if session_id not in self.memories:
+            self.memories[session_id] = SessionMessageBuffer()
+        return self.memories[session_id]
+    
+    def _sanitize_input(self, user_message: str) -> str:
+        """Prevent prompt injection attacks"""
+        dangerous_patterns = [
+            r"ignore previous instructions",
+            r"system:",
+            r"<\|im_start\|>",
+            r"<\|im_end\|>",
+            r"### Instruction:",
+            r"SYSTEM PROMPT:",
+        ]
+        
+        sanitized = user_message
+        for pattern in dangerous_patterns:
+            sanitized = re.sub(pattern, "", sanitized, flags=re.IGNORECASE)
+        
+        # Limit length
+        if len(sanitized) > 500:
+            sanitized = sanitized[:500]
+        
+        return sanitized.strip()
+    
+    def _detect_language(self, text: str) -> str:
+        """Detect if message is in Nepali or English"""
+        # Check for Devanagari script
+        nepali_chars = sum(1 for c in text if '\u0900' <= c <= '\u097F')
+        
+        if nepali_chars > len(text) * 0.3:
+            return "nepali"
+        
+        # Check for romanized Nepali keywords
+        nepali_keywords = ["ke", "kasto", "kati", "chha", "huncha", "thik"]
+        if any(keyword in text.lower() for keyword in nepali_keywords):
+            return "nepali"
+        
+        return "english"
+    
+    def _validate_response(self, response_content: str) -> bool:
+        """Validate LLM response quality. Uses message_md if content is JSON."""
+        if not response_content or not isinstance(response_content, str):
+            return False
+        
+        # Use the text we'll actually show to the user for validation
+        text_to_check = response_content.strip()
+        try:
+            parsed = json.loads(response_content)
+            if isinstance(parsed, dict) and parsed.get("message_md"):
+                text_to_check = (parsed.get("message_md") or "").strip()
+        except (json.JSONDecodeError, TypeError):
+            pass
+        
+        # Allow short friendly replies (e.g. "Hi! 👋" or "Hello!")
+        if len(text_to_check) < 3:
+            return False
+        
+        # Check for common error/refusal patterns
+        error_patterns = [
+            "i cannot",
+            "i'm unable to",
+            "as an ai",
+            "i don't have access",
+            "i apologize, but i cannot"
+        ]
+        content_lower = text_to_check.lower()
+        if any(pattern in content_lower for pattern in error_patterns):
+            logger.warning("llm_response_contains_refusal_pattern", response_preview=text_to_check[:100])
+            return False
+        
+        # Optional: warn on markdown in response (don't reject)
+        markdown_patterns = [
+            (r'\*\*[^*]+\*\*', 'bold'),
+            (r'\*[^*]+\*', 'italic'),
+            (r'^\d+\.', 'numbered_list'),
+            (r'^[-*]\s', 'bullet_point'),
+        ]
+        for pattern, pattern_name in markdown_patterns:
+            if re.search(pattern, text_to_check, re.MULTILINE):
+                logger.warning(
+                    "llm_response_contains_markdown",
+                    pattern_type=pattern_name,
+                    response_preview=text_to_check[:150]
+                )
+        
+        return True
+    
+    def _parse_llm_response(self, response_content: str) -> Tuple[str, Optional[List[str]]]:
+        """Extract display message and quick_replies from LLM output (JSON or plain text)."""
+        if not response_content or not isinstance(response_content, str):
+            return ("", None)
+        text = response_content.strip()
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                msg = (parsed.get("message_md") or parsed.get("message") or text)
+                replies = parsed.get("quick_replies")
+                if isinstance(replies, list) and all(isinstance(r, str) for r in replies):
+                    return (msg.strip() if isinstance(msg, str) else str(msg), replies)
+                return (msg.strip() if isinstance(msg, str) else str(msg), None)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return (text, None)
+    
+    @retry_on_api_error(max_attempts=3, min_wait=1, max_wait=10)
+    async def _call_llm_with_retry(self, messages: List[BaseMessage]) -> str:
+        """Call LLM with retry logic and circuit breaker"""
+        try:
+            # Use circuit breaker to prevent cascading failures
+            response = await llm_circuit_breaker.call(
+                self.llm.ainvoke,
+                messages
+            )
+            return response.content
+        except CircuitBreakerError as e:
+            logger.error("circuit_breaker_open", error=str(e))
+            raise
+        except Exception as e:
+            logger.error("llm_call_failed", error=str(e), error_type=type(e).__name__)
+            raise
+
+    async def generate_response(
+        self,
+        user_message: str,
+        session_id: str,
+        context: Optional[Dict] = None
+    ) -> Dict:
+        """Generate chatbot response with retry, circuit breaker, and validation"""
+        start_time = asyncio.get_event_loop().time()
+        
+        try:
+            # Sanitize input
+            sanitized_message = self._sanitize_input(user_message)
+            
+            # Detect language
+            language = self._detect_language(sanitized_message)
+            
+            # Get conversation memory
+            memory = self._get_memory(session_id)
+            
+            # Build messages
+            messages = [
+                SystemMessage(content=SYSTEM_PROMPT),
+            ]
+            
+            # Add conversation history
+            history = memory.load_memory_variables({})
+            if history.get("history"):
+                for msg in history["history"]:
+                    messages.append(msg)
+            
+            # Add current user message
+            messages.append(HumanMessage(content=sanitized_message))
+            
+            # Generate response with timeout, retry, and circuit breaker
+            # Allow enough time for up to 3 retries (each call can take 5–15s on slow networks)
+            try:
+                response_content = await asyncio.wait_for(
+                    self._call_llm_with_retry(messages),
+                    timeout=45.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning("llm_timeout_after_retries", session_id=session_id)
+                return self._get_fallback_response()
+            except CircuitBreakerError:
+                logger.error("circuit_breaker_rejected", session_id=session_id)
+                return self._get_fallback_response(circuit_breaker_open=True)
+            
+            # Validate response quality (validates the message we'll show, not raw JSON)
+            if not self._validate_response(response_content):
+                logger.warning(
+                    "llm_response_validation_failed",
+                    session_id=session_id,
+                    response_preview=response_content[:200] if response_content else None
+                )
+                return self._get_fallback_response()
+            
+            # Parse JSON or use plain text so we show message_md, not raw JSON
+            display_message, quick_replies = self._parse_llm_response(response_content)
+            
+            # Save to memory (store display message for consistency)
+            memory.save_context(
+                {"input": sanitized_message},
+                {"output": display_message}
+            )
+            
+            elapsed_time = asyncio.get_event_loop().time() - start_time
+            
+            logger.info(
+                "llm_response_generated",
+                session_id=session_id,
+                language=language,
+                message_length=len(sanitized_message),
+                response_length=len(display_message),
+                elapsed_seconds=round(elapsed_time, 2)
+            )
+            
+            result = {
+                "message": display_message,
+                "language": language,
+                "session_id": session_id
+            }
+            if quick_replies:
+                result["quick_replies"] = quick_replies
+            return result
+            
+        except Exception as e:
+            error_str = str(e).lower()
+            error_type = type(e).__name__
+            
+            # Categorize error for better logging
+            if "api key" in error_str or "authentication" in error_str or "unauthorized" in error_str:
+                logger.error("gemini_api_auth_error", error=str(e), error_type=error_type, session_id=session_id)
+            elif "quota" in error_str or "rate limit" in error_str or "resource_exhausted" in error_str:
+                logger.error("gemini_api_quota_error", error=str(e), error_type=error_type, session_id=session_id)
+            elif "not_found" in error_str or "404" in error_str:
+                logger.error("gemini_api_model_not_found", error=str(e), error_type=error_type, session_id=session_id)
+            else:
+                logger.error("gemini_api_unknown_error", error=str(e), error_type=error_type, session_id=session_id)
+            
+            return self._get_fallback_response()
+    
+    def _get_fallback_response(self, circuit_breaker_open: bool = False) -> Dict:
+        """Get context-aware fallback response when LLM fails"""
+        if circuit_breaker_open:
+            message = "I'm experiencing high load right now and need a moment to recover. In the meantime, here are some popular options you might like:"
+        else:
+            message = "I'm having trouble processing your request right now. Here are some quick options to help you find what you need:"
+        
+        return {
+            "message": message,
+            "quick_replies": [
+                "Show me bats",
+                "Show me gloves",
+                "Show me pads",
+                "Talk to human"
+            ],
+            "fallback": True
+        }
+    
+    def clear_memory(self, session_id: str):
+        """Clear conversation memory for session"""
+        if session_id in self.memories:
+            del self.memories[session_id]
+            logger.info("memory_cleared", session_id=session_id)
+
+
+# Global LLM service instance
+llm_service = LLMService()
+
+
+async def get_llm_service() -> LLMService:
+    """Dependency to get LLM service"""
+    return llm_service

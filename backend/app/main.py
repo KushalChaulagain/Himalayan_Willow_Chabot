@@ -6,15 +6,41 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 import structlog
 from datetime import datetime
+import sys
 
 from app.config import settings
 from app.db.database import db
 from app.db.database import DatabaseUnavailableError
-from app.routes import chat, orders, payments
+from app.routes import chat, orders, payments, analytics, chat_enhanced, greeting, user_profile, products, auth
+
+# Configure Sentry if enabled
+if settings.enable_sentry and settings.sentry_dsn:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+        
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.environment,
+            traces_sample_rate=0.1 if settings.environment == "production" else 1.0,
+            profiles_sample_rate=0.1 if settings.environment == "production" else 1.0,
+            integrations=[
+                FastApiIntegration(),
+                StarletteIntegration(),
+            ],
+            before_send=lambda event, hint: event if settings.environment != "development" else None,
+        )
+        print("✓ Sentry initialized successfully")
+    except ImportError:
+        print("⚠ Sentry SDK not installed. Install with: pip install sentry-sdk", file=sys.stderr)
+    except Exception as e:
+        print(f"⚠ Failed to initialize Sentry: {e}", file=sys.stderr)
 
 # Configure structured logging
 structlog.configure(
     processors=[
+        structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.JSONRenderer()
     ]
@@ -35,9 +61,15 @@ app = FastAPI(
 )
 
 # Include routers
+app.include_router(auth.router)
 app.include_router(chat.router)
+app.include_router(chat_enhanced.router)
 app.include_router(orders.router)
 app.include_router(payments.router)
+app.include_router(analytics.router)
+app.include_router(greeting.router)
+app.include_router(user_profile.router)
+app.include_router(products.router)
 
 # Add rate limiter to app state
 app.state.limiter = limiter
@@ -55,23 +87,54 @@ app.add_middleware(
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Log all incoming requests"""
+    """Log all incoming requests with enhanced metrics"""
     start_time = datetime.utcnow()
+    request_id = f"{start_time.timestamp()}-{get_remote_address(request)}"
     
-    response = await call_next(request)
+    # Add request ID to context
+    structlog.contextvars.clear_contextvars()
+    structlog.contextvars.bind_contextvars(request_id=request_id)
     
-    duration = (datetime.utcnow() - start_time).total_seconds()
-    
-    logger.info(
-        "request_completed",
-        method=request.method,
-        path=request.url.path,
-        status_code=response.status_code,
-        duration_seconds=duration,
-        client_ip=get_remote_address(request)
-    )
-    
-    return response
+    try:
+        response = await call_next(request)
+        
+        duration = (datetime.utcnow() - start_time).total_seconds()
+        
+        # Log level based on status code
+        log_level = "info"
+        if response.status_code >= 500:
+            log_level = "error"
+        elif response.status_code >= 400:
+            log_level = "warning"
+        
+        log_func = getattr(logger, log_level)
+        log_func(
+            "request_completed",
+            method=request.method,
+            path=request.url.path,
+            status_code=response.status_code,
+            duration_seconds=round(duration, 3),
+            client_ip=get_remote_address(request),
+            user_agent=request.headers.get("user-agent", "")[:100]
+        )
+        
+        # Add custom headers for debugging
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Response-Time"] = f"{duration:.3f}s"
+        
+        return response
+    except Exception as e:
+        duration = (datetime.utcnow() - start_time).total_seconds()
+        logger.error(
+            "request_failed",
+            method=request.method,
+            path=request.url.path,
+            duration_seconds=round(duration, 3),
+            error=str(e),
+            error_type=type(e).__name__,
+            client_ip=get_remote_address(request)
+        )
+        raise
 
 
 @app.get("/")
@@ -86,11 +149,17 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with circuit breaker status"""
+    from app.utils.circuit_breaker import llm_circuit_breaker
+    
+    circuit_state = llm_circuit_breaker.get_state()
+    
     return {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
-        "environment": settings.environment
+        "environment": settings.environment,
+        "database": "connected" if db.is_available else "unavailable",
+        "circuit_breaker": circuit_state
     }
 
 
@@ -101,6 +170,23 @@ async def api_health_check():
         "status": "healthy",
         "api_version": "1.0.0",
         "timestamp": datetime.utcnow().isoformat()
+    }
+
+
+@app.get("/api/v1/health")
+async def api_v1_health_check():
+    """Versioned keep-alive endpoint for uptime monitors and load balancers."""
+    from app.utils.circuit_breaker import llm_circuit_breaker
+    from app.services.llm import llm_service
+
+    circuit_state = llm_circuit_breaker.get_state()
+
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "database": "connected" if db.is_available else "unavailable",
+        "llm_provider": llm_service.active_provider,
+        "circuit_breaker": circuit_state,
     }
 
 
