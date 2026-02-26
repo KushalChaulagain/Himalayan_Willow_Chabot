@@ -1,9 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Body
+from fastapi.responses import StreamingResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 import uuid
 import structlog
 from datetime import datetime
+import json
+import asyncio
 
 from app.models.chat import ChatMessageRequest, ChatResponse, ChatSessionCreate
 from app.services.llm import LLMService, get_llm_service
@@ -103,26 +106,44 @@ async def send_message(
             session_id
         )
     except Exception as e:
+        error_type = type(e).__name__
+        error_str = str(e).lower()
+        
         logger.error(
             "llm_generation_failed",
             error=str(e),
-            error_type=type(e).__name__,
+            error_type=error_type,
             session_id=session_id,
             message_preview=chat_request.message[:100]
         )
-        # Return user-friendly error response instead of raising HTTP 500
+        
+        # Context-aware error messages based on error type
+        if "circuit" in error_str or "breaker" in error_str:
+            message = "I'm experiencing high traffic right now. Please wait a moment and try again, or I can show you our popular products."
+            quick_replies = ["Wait and retry", "Show popular products", "Talk to human"]
+        elif "timeout" in error_str:
+            message = "I'm taking longer than usual to respond. This might be due to high demand. Would you like to try again or see our popular items?"
+            quick_replies = ["Retry", "Show popular products", "Talk to human"]
+        elif "rate" in error_str or "quota" in error_str:
+            message = "I'm receiving too many requests right now. Please wait a moment before trying again."
+            quick_replies = ["Wait and retry", "Talk to human"]
+        else:
+            message = "I'm having trouble processing your request. Could you try rephrasing? For example: 'Show me bats under 5000 rupees'"
+            quick_replies = ["Show me bats", "Show me gloves", "Talk to human"]
+        
         return ChatResponse(
-            message="I'm having trouble thinking right now. Please try again in a moment.",
-            quick_replies=["Retry", "Show me bats", "Show me gloves", "Talk to human"],
+            message=message,
+            quick_replies=quick_replies,
             session_id=session_id
         )
 
     message_lower = chat_request.message.lower()
     product_keywords = ["bat", "ball", "gloves", "pads", "helmet", "shoes", "bag", "show", "recommend"]
 
-    product_cards = None
-    quick_replies = None
+    product_cards = llm_response.get("product_cards")  # From parsed LLM JSON
+    quick_replies = llm_response.get("quick_replies")   # From parsed LLM JSON
 
+    # Overlay DB-backed product_cards when we have keyword match (real catalog data)
     if db.is_available and any(keyword in message_lower for keyword in product_keywords):
         product_service = ProductService(db)
         category = None
@@ -168,7 +189,7 @@ async def send_message(
                     }
                     for p in products
                 ]
-                quick_replies = ["Add to cart", "Tell me more", "Show other options"]
+                quick_replies = quick_replies or ["Add to cart", "Tell me more", "Show other options"]
 
     if db.is_available:
         try:
@@ -190,6 +211,57 @@ async def send_message(
         product_cards=product_cards,
         quick_replies=quick_replies or ["Show me bats", "Show me gloves", "Talk to human"],
         session_id=session_id
+    )
+
+
+@router.post("/stream")
+async def stream_message(
+    chat_request: ChatMessageRequest,
+    llm_service: LLMService = Depends(get_llm_service),
+    db: Database = Depends(get_db)
+):
+    """
+    Stream chat response using Server-Sent Events (SSE).
+    This provides real-time typing effect for better UX.
+    """
+    session_id = chat_request.session_id or str(uuid.uuid4())
+    
+    async def event_generator():
+        try:
+            # Send initial event
+            yield f"data: {json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
+            
+            # Generate response
+            llm_response = await llm_service.generate_response(
+                chat_request.message,
+                session_id
+            )
+            
+            # Stream the message word by word for typing effect
+            message = llm_response.get("message", "")
+            words = message.split()
+            
+            for i, word in enumerate(words):
+                chunk = word + (" " if i < len(words) - 1 else "")
+                yield f"data: {json.dumps({'type': 'chunk', 'content': chunk})}\n\n"
+                await asyncio.sleep(0.05)  # Small delay for typing effect
+            
+            # Send completion event with metadata
+            yield f"data: {json.dumps({'type': 'complete', 'session_id': session_id, 'language': llm_response.get('language', 'english')})}\n\n"
+            
+        except Exception as e:
+            logger.error("stream_error", error=str(e), session_id=session_id)
+            error_message = "I encountered an error while processing your request."
+            yield f"data: {json.dumps({'type': 'error', 'message': error_message})}\n\n"
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
     )
 
 
