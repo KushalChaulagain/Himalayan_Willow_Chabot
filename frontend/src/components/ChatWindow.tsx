@@ -72,29 +72,65 @@ const ChatWindow: React.FC = () => {
         </div>
 
         <div className="relative">
-          <button
-            ref={filterButtonRef}
-            onClick={() => setFilterMenuOpen((v) => !v)}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-sm font-medium text-white/90 transition-colors min-h-[44px]"
-            aria-expanded={filterMenuOpen}
-            aria-haspopup="dialog"
-            aria-label="Open filters"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-            </svg>
-            Browse
-          </button>
-          <Suspense fallback={null}>
-            <CricketFilterMegaMenu
-              open={filterMenuOpen}
-              onClose={() => setFilterMenuOpen(false)}
-              anchorRef={filterButtonRef}
-            />
-          </Suspense>
+          {user && (
+            <>
+              <button
+                ref={filterButtonRef}
+                onClick={() => setFilterMenuOpen((v) => !v)}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-sm font-medium text-white/90 transition-colors min-h-[44px]"
+                aria-expanded={filterMenuOpen}
+                aria-haspopup="dialog"
+                aria-label="Open filters"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                </svg>
+                Browse
+              </button>
+              <Suspense fallback={null}>
+                <CricketFilterMegaMenu
+                  open={filterMenuOpen}
+                  onClose={() => setFilterMenuOpen(false)}
+                  anchorRef={filterButtonRef}
+                />
+              </Suspense>
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-1">
+          {/* Cart button - only when logged in */}
+          {user && (
+            <button
+              onClick={() => setKitBagOpen(true)}
+              className="relative flex items-center gap-1.5 px-2.5 py-1.5 text-white hover:text-white hover:bg-white/10 rounded-lg transition-colors"
+              aria-label="Open cart"
+              title="My Kit Bag"
+            >
+              <svg
+                className="w-5 h-5 shrink-0"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M3 3h2l.4 2M7 13h10l4-8H7.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
+                />
+              </svg>
+              <span className="text-sm font-medium hidden sm:inline">
+                Cart{cartItems.length > 0 ? ` (${cartItems.length})` : ""}
+              </span>
+              {cartItems.length > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-amber-500 text-[#1A1A1A] text-[9px] font-bold rounded-full flex items-center justify-center sm:hidden">
+                  {cartItems.length}
+                </span>
+              )}
+            </button>
+          )}
+
           {/* Auth: user avatar (when logged in); when !user, login is in centered overlay */}
           {user ? (
             <div className="relative">
@@ -143,38 +179,6 @@ const ChatWindow: React.FC = () => {
               )}
             </div>
           ) : null}
-
-          {/* Cart button - only when logged in */}
-          {user && (
-            <button
-              onClick={() => setKitBagOpen(true)}
-              className="relative flex items-center gap-1.5 px-2.5 py-1.5 text-white hover:text-white hover:bg-white/10 rounded-lg transition-colors"
-              aria-label="Open cart"
-              title="My Kit Bag"
-            >
-              <svg
-                className="w-5 h-5 shrink-0"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M3 3h2l.4 2M7 13h10l4-8H7.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"
-                />
-              </svg>
-              <span className="text-sm font-medium hidden sm:inline">
-                Cart{cartItems.length > 0 ? ` (${cartItems.length})` : ""}
-              </span>
-              {cartItems.length > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-amber-500 text-[#1A1A1A] text-[9px] font-bold rounded-full flex items-center justify-center sm:hidden">
-                  {cartItems.length}
-                </span>
-              )}
-            </button>
-          )}
         </div>
       </div>
 
