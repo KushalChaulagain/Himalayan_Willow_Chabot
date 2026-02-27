@@ -17,9 +17,13 @@ class ProductService:
         category: Optional[str] = None,
         max_price: Optional[float] = None,
         min_rating: float = 0.0,
+        willow_type: Optional[str] = None,
+        weight_min: Optional[int] = None,
+        weight_max: Optional[int] = None,
+        player_level: Optional[str] = None,
         limit: int = 5
     ) -> List[Product]:
-        """Search products with filters"""
+        """Search products with filters including cricket-specific specs."""
         
         query = """
         SELECT id, store_id, sku, name, category, subcategory, description,
@@ -30,7 +34,7 @@ class ProductService:
         WHERE in_stock = true
         """
         
-        params = []
+        params: list = []
         param_count = 1
         
         if category:
@@ -46,6 +50,26 @@ class ProductService:
         if min_rating > 0:
             query += f" AND rating >= ${param_count}"
             params.append(min_rating)
+            param_count += 1
+        
+        if willow_type:
+            query += f" AND specifications->>'bat_type' ILIKE ${param_count}"
+            params.append(f"%{willow_type}%")
+            param_count += 1
+        
+        if weight_min is not None or weight_max is not None:
+            if weight_min is not None:
+                query += f" AND COALESCE((NULLIF(SUBSTRING(COALESCE(specifications->>'weight','') FROM '[0-9]+'), '')::int), 0) >= ${param_count}"
+                params.append(weight_min)
+                param_count += 1
+            if weight_max is not None:
+                query += f" AND COALESCE((NULLIF(SUBSTRING(COALESCE(specifications->>'weight','') FROM '[0-9]+'), '')::int), 9999) <= ${param_count}"
+                params.append(weight_max)
+                param_count += 1
+        
+        if player_level:
+            query += f" AND specifications->>'suitable_for' ILIKE ${param_count}"
+            params.append(f"%{player_level}%")
             param_count += 1
         
         query += " ORDER BY rating DESC, sales_count DESC"

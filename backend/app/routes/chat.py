@@ -13,10 +13,32 @@ import asyncio
 from app.models.chat import ChatMessageRequest, ChatResponse, ChatSessionCreate
 from app.services.llm import LLMService, get_llm_service
 from app.services.products import ProductService
+from app.services.vector_search import vector_search_service
 from app.db.database import Database, get_db, DatabaseUnavailableError
 from app.routes.auth import get_current_user_optional
 
 logger = structlog.get_logger()
+
+
+def _format_product_card(p) -> dict:
+    """Format Product model to chat product_card format."""
+    return {
+        "id": p.id,
+        "name": p.name,
+        "price": p.price,
+        "original_price": float(p.original_price) if p.original_price else None,
+        "image_url": p.image_url,
+        "images": p.specifications.get("images") if p.specifications else None,
+        "audio_url": p.specifications.get("audio_url") if p.specifications else None,
+        "is_premium": p.price >= 8000,
+        "category": p.category,
+        "description": p.description,
+        "rating": float(p.rating),
+        "review_count": p.review_count,
+        "reason": f"Great {p.category} rated {p.rating}/5 by {p.review_count} reviews",
+        "in_stock": p.in_stock,
+        "specifications": p.specifications,
+    }
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 limiter = Limiter(key_func=get_remote_address)
 
@@ -72,8 +94,6 @@ async def send_message(
     current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
     """Send a chat message and get response. Works without DB (no persistence)."""
-    print(f"\n[DEBUG] send_message called with message: {chat_request.message[:50]}...")
-    
     user_id = current_user["id"] if current_user else None
 
     # Resolve session ID (create in DB only if DB available)
@@ -205,48 +225,86 @@ async def send_message(
             limit = 12
 
         max_price = None
-        price_match = re.search(r'(\d+)\s*(?:rupees|rs|npr)', message_lower)
+        price_match = re.search(r'(\d+)\s*(?:k|thousand|rupees|rs|npr)', message_lower)
         if price_match:
-            max_price = float(price_match.group(1))
+            val = float(price_match.group(1))
+            if "k" in message_lower or "thousand" in message_lower:
+                max_price = val * 1000
+            else:
+                max_price = val
+
+        willow_type = None
+        if "kashmir" in message_lower:
+            willow_type = "Kashmir Willow"
+        elif "english" in message_lower:
+            willow_type = "English Willow"
+
+        player_level = None
+        if any(w in message_lower for w in ["beginner", "started", "first bat", "new to cricket"]):
+            player_level = "Beginner"
+        elif any(w in message_lower for w in ["intermediate", "club", "league"]):
+            player_level = "Intermediate"
+        elif any(w in message_lower for w in ["pro", "professional", "serious", "competitive"]):
+            player_level = "Professional"
+
+        weight_min = weight_max = None
+        weight_match = re.search(r'(\d{3,4})\s*[-–]\s*(\d{3,4})\s*g', message_lower)
+        if weight_match:
+            weight_min, weight_max = int(weight_match.group(1)), int(weight_match.group(2))
+        elif re.search(r'(\d{3,4})\s*g', message_lower):
+            w = int(re.search(r'(\d{3,4})\s*g', message_lower).group(1))
+            weight_min = max(900, w - 50)
+            weight_max = min(1500, w + 50)
 
         limit = 6 if category else 12
         if is_browse_query and not category:
             limit = 20
 
-        try:
-            products = await product_service.search_products(
-                category=category,
-                max_price=max_price,
-                limit=limit
-            )
-            logger.info("product_search_result", category=category, count=len(products))
-        except DatabaseUnavailableError:
-            products = []
-        except Exception as e:
-            logger.error("product_search_error", error=str(e))
-            products = []
+        products = []
+
+        # Try conversational/semantic search first for natural language queries.
+        # Uses full message for embedding similarity (e.g. "bat for power hitting").
+        if vector_search_service.is_available:
+            try:
+                vector_results = vector_search_service.search_products_semantic(
+                    query=chat_request.message,
+                    max_price=max_price,
+                    willow_type=willow_type,
+                    player_level=player_level,
+                    category=category,
+                    limit=limit,
+                )
+                if vector_results:
+                    product_ids = [m["product_id"] for m in vector_results]
+                    products = await product_service.get_products_by_ids(product_ids)
+                    logger.info(
+                        "semantic_search_result",
+                        query_preview=chat_request.message[:50],
+                        product_count=len(products),
+                    )
+            except Exception as e:
+                logger.warning("semantic_search_fallback", error=str(e))
+
+        if not products:
+            try:
+                products = await product_service.search_products(
+                    category=category,
+                    max_price=max_price,
+                    willow_type=willow_type,
+                    weight_min=weight_min,
+                    weight_max=weight_max,
+                    player_level=player_level,
+                    limit=limit
+                )
+                logger.info("product_search_result", category=category, count=len(products))
+            except DatabaseUnavailableError:
+                products = []
+            except Exception as e:
+                logger.error("product_search_error", error=str(e))
+                products = []
 
         if products:
-            product_cards = [
-                {
-                    "id": p.id,
-                    "name": p.name,
-                    "price": p.price,
-                    "original_price": float(p.original_price) if p.original_price else None,
-                    "image_url": p.image_url,
-                    "images": p.specifications.get("images") if p.specifications else None,
-                    "audio_url": p.specifications.get("audio_url") if p.specifications else None,
-                    "is_premium": p.price >= 8000,
-                    "category": p.category,
-                    "description": p.description,
-                    "rating": float(p.rating),
-                    "review_count": p.review_count,
-                    "reason": f"Great {p.category} rated {p.rating}/5 by {p.review_count} reviews",
-                    "in_stock": p.in_stock,
-                    "specifications": p.specifications,
-                }
-                for p in products
-            ]
+            product_cards = [_format_product_card(p) for p in products]
             if is_browse_query:
                 quick_replies = ["Show me bats", "Show me gloves", "Show me pads", "Show me helmets"]
             else:

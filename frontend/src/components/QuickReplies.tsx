@@ -12,6 +12,9 @@ const CATEGORY_ICONS: Record<string, string> = {
   'Show me gloves': '\u{1F9E4}',
   'Show me pads': '\u{1F9B5}',
   'Show me helmets': '\u26D1\uFE0F',
+  'Kashmir Willow bats': '\u{1F3CF}',
+  'English Willow bats': '\u{1F3CF}',
+  'Bats for beginners': '\u{1F3CF}',
   'I have a photo': '\u{1F4F7}',
   'Talk to human': '\u{1F64B}',
 };

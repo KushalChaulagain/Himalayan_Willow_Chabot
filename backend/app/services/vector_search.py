@@ -56,6 +56,11 @@ class VectorSearchService:
             or specs.get("willow_type", "")
             or ""
         )
+        player_level = (
+            specs.get("suitable_for", "")
+            or specs.get("player_level", "")
+            or ""
+        )
 
         product_text = (
             f"{product['name']}\n"
@@ -73,6 +78,8 @@ class VectorSearchService:
         }
         if willow_type:
             metadata["willow_type"] = willow_type
+        if player_level:
+            metadata["player_level"] = player_level
 
         try:
             self._collection.upsert(
@@ -89,6 +96,7 @@ class VectorSearchService:
         max_price: Optional[float] = None,
         min_price: Optional[float] = None,
         willow_type: Optional[str] = None,
+        player_level: Optional[str] = None,
         category: Optional[str] = None,
         limit: int = 5,
     ) -> List[Dict[str, Any]]:
@@ -111,6 +119,8 @@ class VectorSearchService:
             where_clauses.append({"price": {"$lte": max_price}})
         if willow_type:
             where_clauses.append({"willow_type": willow_type})
+        if player_level:
+            where_clauses.append({"player_level": player_level})
         if category:
             where_clauses.append({"category": category})
 

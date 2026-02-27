@@ -248,6 +248,31 @@ async def startup_event():
     await db.connect()
     logger.info("application_started")
 
+    # Index products into ChromaDB for conversational/semantic search
+    from app.services.vector_search import vector_search_service
+    if vector_search_service.is_available and db.is_available:
+        try:
+            rows = await db.fetch_all(
+                "SELECT id, name, category, description, price, in_stock, specifications FROM products"
+            )
+            products = [
+                {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "category": r["category"],
+                    "description": r["description"] or "",
+                    "price": float(r["price"]),
+                    "in_stock": r["in_stock"],
+                    "specifications": r["specifications"] or {},
+                }
+                for r in rows
+            ]
+            if products:
+                vector_search_service.bulk_index(products)
+                logger.info("chromadb_indexed_at_startup", count=len(products))
+        except Exception as e:
+            logger.warning("chromadb_startup_index_failed", error=str(e))
+
 
 @app.on_event("shutdown")
 async def shutdown_event():

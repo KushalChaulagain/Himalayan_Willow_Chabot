@@ -1,37 +1,38 @@
-import React, { useState, lazy, Suspense } from 'react';
-import { Swiper, SwiperSlide } from 'swiper/react';
-import { Pagination } from 'swiper/modules';
-import 'swiper/css';
-import 'swiper/css/pagination';
-import { ProductCard as ProductCardType } from '../types';
-import { useChatContext } from '../contexts/ChatContext';
-import AudioPlayer from './AudioPlayer';
+import React, { lazy, Suspense, useState } from "react";
+import "swiper/css";
+import "swiper/css/pagination";
+import { Pagination } from "swiper/modules";
+import { Swiper, SwiperSlide } from "swiper/react";
+import { useChatContext } from "../contexts/ChatContext";
+import { ProductCard as ProductCardType } from "../types";
+import AudioPlayer from "./AudioPlayer";
 
-const InstantBuyModal = lazy(() => import('./InstantBuyModal'));
+const InstantBuyModal = lazy(() => import("./InstantBuyModal"));
+const ProductDetailModal = lazy(() => import("./ProductDetailModal"));
 
 interface ProductCardProps {
   product: ProductCardType;
-  layout?: 'compact' | 'full';
+  layout?: "compact" | "full";
 }
 
 const CATEGORY_ICONS: Record<string, string> = {
-  bat: '\u{1F3CF}',
-  ball: '\u{26BE}',
-  gloves: '\u{1F9E4}',
-  pads: '\u{1F9B5}',
-  helmet: '\u{26D1}',
-  shoes: '\u{1F45F}',
-  kit_bag: '\u{1F392}',
+  bat: "\u{1F3CF}",
+  ball: "\u{26BE}",
+  gloves: "\u{1F9E4}",
+  pads: "\u{1F9B5}",
+  helmet: "\u{26D1}",
+  shoes: "\u{1F45F}",
+  kit_bag: "\u{1F392}",
 };
 
 const FALLBACK_GRADIENT: Record<string, string> = {
-  bat: 'from-amber-900/40 to-amber-800/20',
-  ball: 'from-red-900/40 to-red-800/20',
-  gloves: 'from-blue-900/40 to-blue-800/20',
-  pads: 'from-green-900/40 to-green-800/20',
-  helmet: 'from-purple-900/40 to-purple-800/20',
-  shoes: 'from-cyan-900/40 to-cyan-800/20',
-  kit_bag: 'from-orange-900/40 to-orange-800/20',
+  bat: "from-amber-900/40 to-amber-800/20",
+  ball: "from-red-900/40 to-red-800/20",
+  gloves: "from-blue-900/40 to-blue-800/20",
+  pads: "from-green-900/40 to-green-800/20",
+  helmet: "from-purple-900/40 to-purple-800/20",
+  shoes: "from-cyan-900/40 to-cyan-800/20",
+  kit_bag: "from-orange-900/40 to-orange-800/20",
 };
 
 function StarRating({ rating, count }: { rating: number; count?: number }) {
@@ -45,10 +46,10 @@ function StarRating({ rating, count }: { rating: number; count?: number }) {
             key={star}
             className={`w-3.5 h-3.5 ${
               star <= fullStars
-                ? 'text-amber-400'
+                ? "text-amber-400"
                 : star === fullStars + 1 && hasHalf
-                  ? 'text-amber-400/50'
-                  : 'text-white/20'
+                  ? "text-amber-400/50"
+                  : "text-white/20"
             }`}
             fill="currentColor"
             viewBox="0 0 20 20"
@@ -64,10 +65,14 @@ function StarRating({ rating, count }: { rating: number; count?: number }) {
   );
 }
 
-const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'full' }) => {
+const ProductCard: React.FC<ProductCardProps> = ({
+  product,
+  layout = "full",
+}) => {
   const { addToCart, sendMessage } = useChatContext();
   const [imgError, setImgError] = useState(false);
   const [showBuyModal, setShowBuyModal] = useState(false);
+  const [showDetailModal, setShowDetailModal] = useState(false);
 
   const handleAddToCart = () => {
     addToCart(product.id);
@@ -75,23 +80,30 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'full' }) =
   };
 
   const handleLearnMore = () => {
-    sendMessage(`Tell me more about ${product.name}`);
+    setShowDetailModal(true);
   };
 
-  const category = product.category || 'bat';
-  const icon = CATEGORY_ICONS[category] || '\u{1F3CF}';
-  const gradient = FALLBACK_GRADIENT[category] || 'from-gray-900/40 to-gray-800/20';
+  const category = product.category || "bat";
+  const icon = CATEGORY_ICONS[category] || "\u{1F3CF}";
+  const gradient =
+    FALLBACK_GRADIENT[category] || "from-gray-900/40 to-gray-800/20";
 
-  const discount = product.original_price && product.original_price > product.price
-    ? Math.round(((product.original_price - product.price) / product.original_price) * 100)
-    : null;
+  const discount =
+    product.original_price && product.original_price > product.price
+      ? Math.round(
+          ((product.original_price - product.price) / product.original_price) *
+            100,
+        )
+      : null;
 
   const hasMultipleImages = product.images && product.images.length > 1;
 
-  if (layout === 'compact') {
+  if (layout === "compact") {
     return (
       <div className="bg-[#222] border border-white/10 rounded-lg p-2.5 hover:border-white/20 transition-all min-w-[160px] max-w-[180px] flex-shrink-0">
-        <div className={`relative w-full aspect-square rounded-md overflow-hidden bg-gradient-to-br ${gradient} mb-2`}>
+        <div
+          className={`relative w-full aspect-square rounded-md overflow-hidden bg-gradient-to-br ${gradient} mb-2`}
+        >
           {product.image_url && !imgError ? (
             <img
               src={product.image_url}
@@ -111,20 +123,48 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'full' }) =
             </span>
           )}
         </div>
-        <h4 className="font-semibold text-xs text-white truncate">{product.name}</h4>
-        <p className="text-sm font-bold text-white mt-0.5">NPR {product.price.toLocaleString()}</p>
-        {product.rating !== undefined && (
-          <StarRating rating={product.rating} />
-        )}
+        <h4 className="font-semibold text-xs text-white truncate">
+          {product.name}
+        </h4>
+        <p className="text-sm font-bold text-white mt-0.5">
+          NPR {product.price.toLocaleString()}
+        </p>
+        {product.rating !== undefined && <StarRating rating={product.rating} />}
       </div>
     );
   }
 
+  const benefitCopy = (() => {
+    const specs = product.specifications;
+    if (!specs) return product.reason;
+    const suitableFor = specs.suitable_for || specs.player_level;
+    const batType = specs.bat_type || specs.willow_type;
+    const parts: string[] = [];
+    if (suitableFor) {
+      const map: Record<string, string> = {
+        Beginner: "Ideal for beginners",
+        Intermediate: "Ideal for power hitters",
+        Professional: "Ideal for serious players",
+        Pro: "Ideal for serious players",
+      };
+      parts.push(map[suitableFor] || `Ideal for ${suitableFor}`);
+    }
+    if (batType && product.category === "bat") {
+      parts.push(batType.includes("English") ? "Premium English Willow" : "Quality Kashmir Willow");
+    }
+    if (parts.length > 0) return parts.join(" · ");
+    return product.reason;
+  })();
+
+  const showVerifiedBadge = (product.review_count ?? 0) >= 10;
+
   return (
     <>
-      <div className="bg-[#222] border border-white/10 rounded-xl overflow-hidden hover:border-white/25 transition-all group w-[220px] flex-shrink-0">
+      <div className="bg-[#222] border border-white/10 rounded-xl overflow-hidden hover:border-white/25 group-hover:shadow-[0_0_20px_rgba(245,158,11,0.2)] transition-all duration-300 group w-[220px] flex-shrink-0">
         {/* Product Image(s) */}
-        <div className={`relative w-full aspect-[4/3] overflow-hidden bg-gradient-to-br ${gradient}`}>
+        <div
+          className={`relative w-full aspect-[4/3] overflow-hidden bg-gradient-to-br ${gradient}`}
+        >
           {hasMultipleImages ? (
             <Swiper
               modules={[Pagination]}
@@ -172,7 +212,9 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'full' }) =
 
           {!product.in_stock && (
             <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
-              <span className="text-white/90 text-sm font-semibold bg-black/60 px-3 py-1 rounded">Out of Stock</span>
+              <span className="text-white/90 text-sm font-semibold bg-black/60 px-3 py-1 rounded">
+                Out of Stock
+              </span>
             </div>
           )}
         </div>
@@ -180,32 +222,30 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'full' }) =
         {/* Product Info */}
         <div className="p-3">
           <div className="flex items-start justify-between gap-1">
-            <h4 className="font-semibold text-sm text-white leading-tight line-clamp-2">
+            <h4 className="font-bold text-base text-white leading-tight line-clamp-2">
               {product.name}
             </h4>
           </div>
 
-          {product.rating !== undefined && (
-            <div className="mt-1.5">
-              <StarRating rating={product.rating} count={product.review_count} />
-            </div>
-          )}
-
-          {/* Price */}
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-lg font-bold text-white">
+          {/* Price - prominent, with 30-day guarantee badge */}
+          <div className="mt-2 flex flex-wrap items-baseline gap-2">
+            <span className="text-xl font-bold text-white tracking-tight">
               NPR {product.price.toLocaleString()}
             </span>
-            {product.original_price && product.original_price > product.price && (
-              <span className="text-xs text-white/40 line-through">
-                NPR {product.original_price.toLocaleString()}
-              </span>
-            )}
+            {product.original_price &&
+              product.original_price > product.price && (
+                <span className="text-xs text-white/40 line-through">
+                  NPR {product.original_price.toLocaleString()}
+                </span>
+              )}
+            <span className="text-[10px] text-amber-400/90 font-medium px-1.5 py-0.5 rounded-full border border-amber-400/40 bg-amber-400/10">
+              30-Day Game-Ready
+            </span>
           </div>
 
-          {product.reason && (
-            <p className="text-xs text-white/60 mt-1.5 line-clamp-2 leading-relaxed">
-              {product.reason}
+          {benefitCopy && (
+            <p className="text-xs text-white/55 mt-1.5 line-clamp-2 leading-relaxed">
+              {benefitCopy}
             </p>
           )}
 
@@ -219,32 +259,50 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'full' }) =
           {/* Stock indicator */}
           {product.in_stock && (
             <div className="mt-2">
-              <span className="text-[11px] text-emerald-400 font-medium flex items-center gap-1">
-                <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full inline-block"></span>
+              <span className="text-[11px] text-amber-400/90 font-medium flex items-center gap-1">
+                <span className="w-1.5 h-1.5 bg-amber-400 rounded-full inline-block"></span>
                 In Stock
               </span>
             </div>
           )}
 
-          {/* Actions */}
-          <div className="flex gap-2 mt-3">
+          {/* Trust: star rating + Verified Player badge - right above actions */}
+          <div className="mt-3 flex items-center justify-between gap-2 flex-wrap">
+            {product.rating !== undefined && (
+              <StarRating
+                rating={product.rating}
+                count={product.review_count}
+              />
+            )}
+            {showVerifiedBadge && (
+              <span className="text-[10px] text-amber-400 font-medium flex items-center gap-0.5">
+                <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M6.267 3.455a3.066 3.066 0 001.745-.723 3.066 3.066 0 013.976 0 3.066 3.066 0 001.745.723 3.066 3.066 0 012.812 2.812c.051.643.304 1.254.723 1.745a3.066 3.066 0 010 3.976 3.066 3.066 0 00-.723 1.745 3.066 3.066 0 01-2.812 2.812 3.066 3.066 0 00-1.745.723 3.066 3.066 0 01-3.976 0 3.066 3.066 0 00-1.745-.723 3.066 3.066 0 01-2.812-2.812 3.066 3.066 0 00-.723-1.745 3.066 3.066 0 010-3.976 3.066 3.066 0 00.723-1.745 3.066 3.066 0 012.812-2.812zm7.44 5.252a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+                Verified
+              </span>
+            )}
+          </div>
+
+          {/* Actions - gold accent for primary CTA, cohesive palette */}
+          <div className="flex gap-2 mt-2">
             <button
               onClick={handleAddToCart}
               disabled={!product.in_stock}
-              className="flex-1 bg-white hover:bg-white/90 disabled:opacity-40 disabled:cursor-not-allowed text-[#1A1A1A] text-xs py-2 px-2 rounded-lg font-semibold transition-colors"
+              className="flex-1 bg-white hover:bg-white/90 disabled:opacity-40 disabled:cursor-not-allowed text-[#1A1A1A] text-xs py-2 px-2 rounded-lg font-semibold transition-colors min-h-[44px]"
             >
               Add to Cart
             </button>
             <button
               onClick={() => setShowBuyModal(true)}
               disabled={!product.in_stock}
-              className="bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs py-2 px-2 rounded-lg font-semibold transition-colors"
+              className="bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-[#1A1A1A] text-xs py-2 px-2 rounded-lg font-semibold transition-colors min-h-[44px] min-w-[44px]"
             >
               Buy Now
             </button>
             <button
               onClick={handleLearnMore}
-              className="bg-transparent hover:bg-white/10 border border-white/20 text-white text-xs py-2 px-2 rounded-lg transition-colors"
+              className="bg-transparent hover:bg-white/10 border border-white/20 text-white text-xs py-2 px-2 rounded-lg transition-colors min-h-[44px] min-w-[44px]"
             >
               Details
             </button>
@@ -258,6 +316,16 @@ const ProductCard: React.FC<ProductCardProps> = ({ product, layout = 'full' }) =
           <InstantBuyModal
             product={product}
             onClose={() => setShowBuyModal(false)}
+          />
+        </Suspense>
+      )}
+
+      {/* Product Detail Modal - sticky Add to Cart / Buy Now */}
+      {showDetailModal && (
+        <Suspense fallback={null}>
+          <ProductDetailModal
+            product={product}
+            onClose={() => setShowDetailModal(false)}
           />
         </Suspense>
       )}

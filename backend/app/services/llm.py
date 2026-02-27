@@ -97,10 +97,10 @@ TONE & VOICE
 
 OUTPUT FORMAT (strict JSON only)
 Return ONLY valid JSON matching this schema:
-{
+{{
   "message_md": "short, action-oriented text (2-3 sentences max)",
   "quick_replies": ["...","...","..."]
-}
+}}
 """
 
 

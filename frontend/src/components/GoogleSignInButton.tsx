@@ -24,8 +24,8 @@ const GoogleSignInButton: React.FC<GoogleSignInButtonProps> = ({
         }}
         onError={() => onError?.()}
         useOneTap={false}
-        theme="filled_black"
-        size="medium"
+        theme="filled_blue"
+        size="large"
         shape="rectangular"
         text="continue_with"
       />

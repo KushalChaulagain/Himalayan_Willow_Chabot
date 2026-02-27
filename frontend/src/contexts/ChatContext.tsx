@@ -39,7 +39,7 @@ interface ChatProviderProps {
 }
 
 export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const tokenRef = useRef<string | null>(null);
   useEffect(() => {
     tokenRef.current = token;
@@ -65,14 +65,21 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
   const responseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const greetingFetched = useRef(false);
 
-  // Fetch dynamic greeting on mount
+  // Fetch dynamic greeting on mount (personalized when user/cart available)
   useEffect(() => {
     if (greetingFetched.current) return;
     greetingFetched.current = true;
 
     const returning = isReturningUser();
 
-    apiClient.fetchGreeting(sessionId || undefined, returning).then((greeting) => {
+    apiClient
+      .fetchGreeting(
+        sessionId || undefined,
+        returning,
+        user?.id,
+        cartItems.length > 0 ? cartItems : undefined,
+      )
+      .then((greeting) => {
       const initialMessage: Message = {
         id: 'greeting-1',
         sender: 'bot',
@@ -84,7 +91,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
       setMessages([initialMessage]);
       saveProfile({ last_visit: new Date().toISOString() });
     });
-  }, [apiClient, sessionId]);
+  }, [apiClient, sessionId, user?.id, cartItems]);
 
   // Network status detection
   useEffect(() => {
