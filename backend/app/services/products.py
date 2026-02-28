@@ -302,7 +302,9 @@ class ProductService:
         """
         query = """
         WITH ranked AS (
-            SELECT *,
+            SELECT id, store_id, sku, name, category, subcategory, description,
+                   price, original_price, in_stock, stock_quantity, rating,
+                   review_count, sales_count, image_url, specifications, created_at,
                    ROW_NUMBER() OVER (PARTITION BY category ORDER BY sales_count DESC, rating DESC) AS rn
             FROM products
             WHERE in_stock = true

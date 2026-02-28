@@ -34,7 +34,9 @@ async def get_user_profile(
     if db.is_available:
         try:
             row = await db.fetch_one(
-                "SELECT * FROM user_profiles WHERE session_id = $1", session_id
+                "SELECT session_id, playing_level, preferred_surface, budget_range, position, age_group "
+                "FROM user_profiles WHERE session_id = $1",
+                session_id,
             )
             if row:
                 profile.update({

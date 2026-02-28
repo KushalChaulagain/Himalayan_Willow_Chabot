@@ -1,8 +1,21 @@
-import React, { createContext, useContext, useState, useCallback, useRef, ReactNode, useEffect } from 'react';
-import { Message, ChatConfig, InteractiveContent } from '../types';
-import APIClient from '../services/api';
-import { loadProfile, saveProfile, isReturningUser, getSavedSessionId } from '../utils/userProfile';
-import { useAuth } from './AuthContext';
+import React, {
+    createContext,
+    ReactNode,
+    useCallback,
+    useContext,
+    useEffect,
+    useRef,
+    useState,
+} from "react";
+import APIClient from "../services/api";
+import { ChatConfig, InteractiveContent, Message } from "../types";
+import {
+    getSavedSessionId,
+    isReturningUser,
+    loadProfile,
+    saveProfile,
+} from "../utils/userProfile";
+import { useAuth } from "./AuthContext";
 
 const RESPONSE_TIMEOUT_MS = 30_000;
 
@@ -28,7 +41,7 @@ const ChatContext = createContext<ChatContextType | undefined>(undefined);
 export const useChatContext = () => {
   const context = useContext(ChatContext);
   if (!context) {
-    throw new Error('useChatContext must be used within ChatProvider');
+    throw new Error("useChatContext must be used within ChatProvider");
   }
   return context;
 };
@@ -38,7 +51,10 @@ interface ChatProviderProps {
   config: ChatConfig;
 }
 
-export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) => {
+export const ChatProvider: React.FC<ChatProviderProps> = ({
+  children,
+  config,
+}) => {
   const { token, user } = useAuth();
   const tokenRef = useRef<string | null>(null);
   useEffect(() => {
@@ -49,7 +65,9 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
   const [isTyping, setIsTyping] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [sessionId, setSessionId] = useState<string | null>(() => getSavedSessionId());
+  const [sessionId, setSessionId] = useState<string | null>(() =>
+    getSavedSessionId(),
+  );
   const [cartItems, setCartItems] = useState<number[]>(() => {
     const profile = loadProfile();
     return profile?.cart_items || [];
@@ -58,8 +76,10 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
     () =>
       new APIClient(config.apiUrl, undefined, {
         getAuthHeaders: (): Record<string, string> =>
-          tokenRef.current ? { Authorization: `Bearer ${tokenRef.current}` } : {},
-      })
+          tokenRef.current
+            ? { Authorization: `Bearer ${tokenRef.current}` }
+            : {},
+      }),
   );
   const [, setStreamingMessageId] = useState<string | null>(null);
   const responseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -80,17 +100,17 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
         cartItems.length > 0 ? cartItems : undefined,
       )
       .then((greeting) => {
-      const initialMessage: Message = {
-        id: 'greeting-1',
-        sender: 'bot',
-        message: greeting.message,
-        timestamp: new Date(),
-        quickReplies: greeting.quick_replies,
-        productCards: greeting.product_cards,
-      };
-      setMessages([initialMessage]);
-      saveProfile({ last_visit: new Date().toISOString() });
-    });
+        const initialMessage: Message = {
+          id: "greeting-1",
+          sender: "bot",
+          message: greeting.message,
+          timestamp: new Date(),
+          quickReplies: greeting.quick_replies,
+          productCards: greeting.product_cards,
+        };
+        setMessages([initialMessage]);
+        saveProfile({ last_visit: new Date().toISOString() });
+      });
   }, [apiClient, sessionId, user?.id, cartItems]);
 
   // Network status detection
@@ -103,33 +123,37 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
       setIsOnline(false);
       const offlineMessage: Message = {
         id: `offline-${Date.now()}`,
-        sender: 'bot',
-        message: "You're currently offline. Please check your internet connection.",
+        sender: "bot",
+        message:
+          "You're currently offline. Please check your internet connection.",
         timestamp: new Date(),
         quickReplies: [],
       };
       setMessages((prev) => [...prev, offlineMessage]);
     };
 
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
 
     return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
     };
   }, []);
 
-  const addBotMessage = useCallback((text: string, extras?: Partial<Message>) => {
-    const botMsg: Message = {
-      id: `bot-${Date.now()}`,
-      sender: 'bot',
-      message: text,
-      timestamp: new Date(),
-      ...extras,
-    };
-    setMessages((prev) => [...prev, botMsg]);
-  }, []);
+  const addBotMessage = useCallback(
+    (text: string, extras?: Partial<Message>) => {
+      const botMsg: Message = {
+        id: `bot-${Date.now()}`,
+        sender: "bot",
+        message: text,
+        timestamp: new Date(),
+        ...extras,
+      };
+      setMessages((prev) => [...prev, botMsg]);
+    },
+    [],
+  );
 
   const sendMessage = useCallback(
     async (text: string, useStreaming: boolean = false) => {
@@ -138,8 +162,9 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
       if (!isOnline) {
         const offlineMessage: Message = {
           id: `offline-${Date.now()}`,
-          sender: 'bot',
-          message: "You're currently offline. Please check your internet connection and try again.",
+          sender: "bot",
+          message:
+            "You're currently offline. Please check your internet connection and try again.",
           timestamp: new Date(),
           quickReplies: [],
         };
@@ -149,7 +174,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
 
       const userMessage: Message = {
         id: Date.now().toString(),
-        sender: 'user',
+        sender: "user",
         message: text,
         timestamp: new Date(),
       };
@@ -179,8 +204,8 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
 
           const streamingMessage: Message = {
             id: streamingMsgId,
-            sender: 'bot',
-            message: '...',
+            sender: "bot",
+            message: "...",
             timestamp: new Date(),
             retryText: text,
           };
@@ -195,11 +220,13 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
                 msg.id === streamingMsgId
                   ? {
                       ...msg,
-                      message: msg.message || "The server didn't respond in time. Please try again.",
+                      message:
+                        msg.message ||
+                        "The server didn't respond in time. Please try again.",
                       failed: true,
                     }
-                  : msg
-              )
+                  : msg,
+              ),
             );
           }, RESPONSE_TIMEOUT_MS);
 
@@ -210,7 +237,8 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
               // Only the final parsed message from the "complete" event is shown.
             },
             (response) => {
-              if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
+              if (responseTimeoutRef.current)
+                clearTimeout(responseTimeoutRef.current);
               setIsStreaming(false);
               setStreamingMessageId(null);
 
@@ -222,20 +250,26 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
                         message: response.message || msg.message,
                         quickReplies: response.quick_replies,
                         productCards: response.product_cards,
-                        interactiveContent: response.interactive_content as InteractiveContent | undefined,
+                        interactiveContent: response.interactive_content as
+                          | InteractiveContent
+                          | undefined,
                         failed: false,
                       }
-                    : msg
-                )
+                    : msg,
+                ),
               );
 
-              if (response.session_id && response.session_id !== currentSessionId) {
+              if (
+                response.session_id &&
+                response.session_id !== currentSessionId
+              ) {
                 setSessionId(response.session_id);
                 saveProfile({ session_id: response.session_id });
               }
             },
             (_error) => {
-              if (responseTimeoutRef.current) clearTimeout(responseTimeoutRef.current);
+              if (responseTimeoutRef.current)
+                clearTimeout(responseTimeoutRef.current);
               setIsStreaming(false);
               setStreamingMessageId(null);
 
@@ -244,13 +278,15 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
                   msg.id === streamingMsgId
                     ? {
                         ...msg,
-                        message: msg.message || "I encountered an error. Please try again.",
+                        message:
+                          msg.message ||
+                          "I encountered an error. Please try again.",
                         failed: true,
                       }
-                    : msg
-                )
+                    : msg,
+                ),
               );
-            }
+            },
           );
 
           return;
@@ -259,22 +295,28 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
         const response = await apiClient.sendMessage(text, currentSessionId);
 
         if (!response || !response.message) {
-          throw new Error('Invalid response from server');
+          throw new Error("Invalid response from server");
         }
 
         const botMessage: Message = {
           id: (Date.now() + 1).toString(),
-          sender: 'bot',
+          sender: "bot",
           message: response.message,
           timestamp: new Date(),
           productCards: response.product_cards,
           quickReplies: response.quick_replies,
-          interactiveContent: response.interactive_content as InteractiveContent | undefined,
+          interactiveContent: response.interactive_content as
+            | InteractiveContent
+            | undefined,
         };
 
         setMessages((prev) => {
           const lastMessage = prev[prev.length - 1];
-          if (lastMessage && lastMessage.sender === 'bot' && lastMessage.message === botMessage.message) {
+          if (
+            lastMessage &&
+            lastMessage.sender === "bot" &&
+            lastMessage.message === botMessage.message
+          ) {
             return prev;
           }
           return [...prev, botMessage];
@@ -285,14 +327,15 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
           saveProfile({ session_id: response.session_id });
         }
       } catch (error) {
-        console.error('Unexpected error in sendMessage:', error);
+        console.error("Unexpected error in sendMessage:", error);
 
         const errorMessage: Message = {
           id: (Date.now() + 1).toString(),
-          sender: 'bot',
-          message: "I encountered an unexpected error. Please try again or contact support if the problem persists.",
+          sender: "bot",
+          message:
+            "I encountered an unexpected error. Please try again or contact support if the problem persists.",
           timestamp: new Date(),
-          quickReplies: ['Retry', 'Talk to human'],
+          quickReplies: ["Retry", "Talk to human"],
         };
 
         setMessages((prev) => [...prev, errorMessage]);
@@ -300,7 +343,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
         setIsTyping(false);
       }
     },
-    [sessionId, apiClient, isOnline]
+    [sessionId, apiClient, isOnline],
   );
 
   const retryMessage = useCallback(
@@ -310,7 +353,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children, config }) 
       setMessages((prev) => prev.filter((m) => m.id !== messageId));
       sendMessage(msg.retryText, true);
     },
-    [messages, sendMessage]
+    [messages, sendMessage],
   );
 
   const addToCart = useCallback((productId: number) => {

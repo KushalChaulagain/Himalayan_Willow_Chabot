@@ -178,7 +178,8 @@ class AnalyticsService:
             AND o.status NOT IN ('CANCELLED', 'REFUNDED')
             GROUP BY order_type
         )
-        SELECT * FROM order_metrics
+        SELECT order_type, order_count, total_revenue, avg_order_value
+        FROM order_metrics
         """
         
         try:
@@ -389,7 +390,8 @@ class AnalyticsService:
             LEFT JOIN orders o ON cs.session_id = o.session_id
             WHERE cs.started_at::date BETWEEN $1 AND $2
         )
-        SELECT * FROM funnel_stages
+        SELECT chat_initiated, products_viewed, added_to_cart, checkout_initiated, order_completed
+        FROM funnel_stages
         """
         
         try:

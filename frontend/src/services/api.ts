@@ -296,7 +296,8 @@ class APIClient {
       if (sessionId) params.set("session_id", sessionId);
       if (isReturning) params.set("returning", "true");
       if (userId) params.set("user_id", String(userId));
-      if (cartItemIds?.length) params.set("cart_item_ids", cartItemIds.join(","));
+      if (cartItemIds?.length)
+        params.set("cart_item_ids", cartItemIds.join(","));
 
       const response = await this.fetchWithTimeout(
         `/api/chat/greeting?${params.toString()}`,

@@ -550,7 +550,8 @@ class RecommendationEngine:
             ORDER BY purchase_count DESC
             LIMIT $2
         )
-        SELECT * FROM co_purchased
+        SELECT product_id, name, price, image_url, category, purchase_count
+        FROM co_purchased
         """
         
         try:

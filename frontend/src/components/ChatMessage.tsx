@@ -1,36 +1,14 @@
-import React, { lazy, Suspense, useMemo, useRef } from "react";
+import React, { lazy, Suspense, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useChatContext } from "../contexts/ChatContext";
 import { Message } from "../types";
 import KnockInCard from "./KnockInCard";
-import LocationCard from "./LocationCard";
 import ProductCard from "./ProductCard";
 import QuickReplies from "./QuickReplies";
 
 const ConfettiCelebration = lazy(() => import("./ConfettiCelebration"));
 const TrackingMap = lazy(() => import("./TrackingMap"));
-
-/** Matches markdown links to Google Maps / Maps domains */
-const MAPS_LINK_REGEX =
-  /\[([^\]]*)\]\((https?:\/\/(?:www\.)?(?:maps\.google\.com|maps\.app\.goo\.gl|goo\.gl\/maps|www\.google\.com\/maps)[^)]*)\)/gi;
-
-function extractMapsLinks(message: string): { cleanedMessage: string; mapsUrls: string[] } {
-  const mapsUrls: string[] = [];
-  let cleanedMessage = message.replace(MAPS_LINK_REGEX, (_, _linkText, url) => {
-    mapsUrls.push(url);
-    return ""; // Remove link from message body
-  });
-  // Deduplicate URLs (LLM may repeat the same maps link in the response)
-  const uniqueMapsUrls = [...new Set(mapsUrls)];
-  // Collapse multiple spaces, clean stray punctuation left after link removal
-  cleanedMessage = cleanedMessage
-    .replace(/\s{2,}/g, " ")
-    .replace(/\s*\.\s*\.+/g, ".")
-    .replace(/\s+\.\s*$/, ".")
-    .trim();
-  return { cleanedMessage, mapsUrls: uniqueMapsUrls };
-}
 
 interface ChatMessageProps {
   message: Message;
@@ -40,11 +18,6 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.sender === "user";
   const { retryMessage } = useChatContext();
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  const { cleanedMessage, mapsUrls } = useMemo(
-    () => (isUser ? { cleanedMessage: message.message, mapsUrls: [] as string[] } : extractMapsLinks(message.message)),
-    [message.message, isUser]
-  );
 
   const hasProducts = message.productCards && message.productCards.length > 0;
   const productCount = message.productCards?.length || 0;
@@ -120,12 +93,8 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                     ),
                   }}
                 >
-                  {cleanedMessage}
+                  {message.message}
                 </ReactMarkdown>
-                {mapsUrls.length > 0 &&
-                  mapsUrls.map((url, i) => (
-                    <LocationCard key={i} mapsUrl={url} />
-                  ))}
               </>
             )}
           </div>
