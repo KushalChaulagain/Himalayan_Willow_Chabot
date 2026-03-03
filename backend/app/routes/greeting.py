@@ -147,7 +147,7 @@ async def get_greeting(
                 suggestions = await rec_engine.suggest_complementary_products(
                     cart_items=product_ids_for_recs,
                     session_id=session_id or f"greeting-{datetime.utcnow().timestamp()}",
-                    max_suggestions=6,
+                    max_suggestions=3,
                 )
                 if suggestions:
                     rec_product_ids = [s["product_id"] for s in suggestions]
@@ -160,14 +160,14 @@ async def get_greeting(
                         featured_products.append(card)
 
             if not featured_products:
-                products = await product_service.get_storefront_mix(limit=6)
+                products = await product_service.get_storefront_mix(limit=3)
                 featured_products = [_format_product_card(p) for p in products]
 
         except Exception as e:
             logger.error("greeting_product_fetch_failed", error=str(e))
             if not featured_products:
                 try:
-                    products = await ProductService(db).get_storefront_mix(limit=6)
+                    products = await ProductService(db).get_storefront_mix(limit=3)
                     featured_products = [_format_product_card(p) for p in products]
                 except Exception:
                     pass

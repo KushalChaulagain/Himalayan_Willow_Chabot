@@ -1,5 +1,5 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any
 from enum import Enum
 
 
@@ -18,12 +18,25 @@ class PaymentStatus(str, Enum):
     REFUNDED = "REFUNDED"
 
 
+class CustomerInfo(BaseModel):
+    """Customer info for payment initiation. Validates structure to prevent arbitrary data."""
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    address: Optional[Dict[str, Any]] = None
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Dict-like get for backward compatibility with .get() usage in routes."""
+        val = getattr(self, key, default)
+        return default if val is None else val
+
+
 class PaymentInitiateRequest(BaseModel):
     """Payment initiation request"""
     order_id: str
     payment_method: PaymentMethod
     amount: int  # in paisa
-    customer_info: dict
+    customer_info: CustomerInfo
 
 
 class PaymentVerifyRequest(BaseModel):

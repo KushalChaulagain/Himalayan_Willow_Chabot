@@ -31,11 +31,12 @@ class ChatResponse(BaseModel):
     action: Optional[Literal["add_to_cart", "checkout", "track_order", "escalate"]] = None
     action_data: Optional[dict] = None
     session_id: str
+    session_token: Optional[str] = None  # For get_chat_history auth; set when session is created
 
 
 class ChatMessageRequest(BaseModel):
     """Request model for chat message"""
-    message: str
+    message: str = Field(..., max_length=2000)
     session_id: Optional[str] = None
 
 

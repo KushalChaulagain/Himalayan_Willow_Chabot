@@ -27,7 +27,7 @@ const QuickReplies: React.FC<QuickRepliesProps> = ({ options }) => {
   };
 
   return (
-    <div className="flex flex-wrap gap-2 mt-3" role="group" aria-label="Quick reply options">
+    <div className="flex flex-wrap gap-1.5 xs:gap-2 mt-3" role="group" aria-label="Quick reply options">
       {options.map((option, index) => {
         const icon = CATEGORY_ICONS[option];
 
@@ -35,7 +35,7 @@ const QuickReplies: React.FC<QuickRepliesProps> = ({ options }) => {
           <button
             key={index}
             onClick={() => handleClick(option)}
-            className="border text-sm py-2 px-4 rounded-button transition-colors focus:outline-none focus:ring-2 focus:ring-white/30 focus:ring-offset-2 focus:ring-offset-[#1A1A1A] bg-transparent hover:bg-white/10 border-white/30 text-white"
+            className="border border-white/15 text-[11px] xs:text-xs sm:text-sm py-1.5 xs:py-2 px-2.5 xs:px-3 sm:px-4 rounded-2xl transition-all duration-200 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:ring-offset-2 focus:ring-offset-[#1A1A1A] bg-transparent hover:bg-white/10 hover:border-white/25 text-white min-h-[40px] xs:min-h-[44px] min-w-[44px]"
             tabIndex={0}
           >
             {icon && `${icon} `}

@@ -1,16 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Request, Header
 import structlog
 
 from app.models.order import OrderCreate, OrderTrackRequest
+from app.limiter import limiter
 from app.services.orders import OrderService
 from app.db.database import Database, get_db
+from app.routes.auth import get_current_user_optional
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/orders", tags=["orders"])
 
 
 @router.post("/create")
+@limiter.limit("60/minute")
 async def create_order(
+    request: Request,
     order_data: OrderCreate,
     db: Database = Depends(get_db)
 ):
@@ -33,19 +38,33 @@ async def create_order(
         raise HTTPException(status_code=500, detail="Failed to create order")
 
 
+def _can_access_order(order, current_user: Optional[dict], session_id_header: Optional[str]) -> bool:
+    """Check if requester is authorized to access the order."""
+    if current_user and order.user_id and order.user_id == current_user["id"]:
+        return True
+    if session_id_header and order.session_id and order.session_id == session_id_header.strip():
+        return True
+    return False
+
+
 @router.get("/{order_id}")
+@limiter.limit("60/minute")
 async def get_order(
+    request: Request,
     order_id: str,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_db),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
 ):
-    """Get order details"""
+    """Get order details. Requires X-Session-ID header matching order.session_id, or authenticated user matching order.user_id."""
     order_service = OrderService(db)
-    
     order = await order_service.get_order_by_id(order_id)
-    
+
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
-    
+    if not _can_access_order(order, current_user, x_session_id):
+        raise HTTPException(status_code=403, detail="Not authorized to access this order")
+
     return {
         "success": True,
         "order": {
@@ -64,16 +83,22 @@ async def get_order(
 
 
 @router.get("/{order_id}/tracking")
+@limiter.limit("60/minute")
 async def get_order_tracking(
+    request: Request,
     order_id: str,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_db),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
 ):
-    """Get order tracking stages for the visual tracking map."""
+    """Get order tracking stages. Requires X-Session-ID or authenticated user matching order."""
     order_service = OrderService(db)
     order = await order_service.get_order_by_id(order_id)
 
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
+    if not _can_access_order(order, current_user, x_session_id):
+        raise HTTPException(status_code=403, detail="Not authorized to access this order")
 
     status_val = order.status.value if hasattr(order.status, 'value') else str(order.status)
 
@@ -121,18 +146,24 @@ async def get_order_tracking(
 
 
 @router.post("/track")
+@limiter.limit("60/minute")
 async def track_order(
-    request: OrderTrackRequest,
-    db: Database = Depends(get_db)
+    request: Request,
+    body: OrderTrackRequest,
+    db: Database = Depends(get_db),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+    x_session_id: Optional[str] = Header(None, alias="X-Session-ID"),
 ):
-    """Track order by order ID or phone number"""
+    """Track order by order ID or phone number. For order_id, requires X-Session-ID or auth. For phone_number, phone is the proof."""
     order_service = OrderService(db)
-    
-    if request.order_id:
-        order = await order_service.get_order_by_id(request.order_id)
+
+    if body.order_id:
+        order = await order_service.get_order_by_id(body.order_id)
+        if order and not _can_access_order(order, current_user, x_session_id):
+            order = None
         orders = [order] if order else []
-    elif request.phone_number:
-        orders = await order_service.get_orders_by_phone(request.phone_number)
+    elif body.phone_number:
+        orders = await order_service.get_orders_by_phone(body.phone_number)
     else:
         raise HTTPException(status_code=400, detail="Provide order_id or phone_number")
     

@@ -67,7 +67,7 @@ async def get_products_by_ids(
     if not db.is_available:
         return {"products": []}
     try:
-        product_ids = [int(x.strip()) for x in ids.split(",") if x.strip()]
+        product_ids = [int(x.strip()) for x in ids.split(",") if x.strip()][:50]
     except ValueError:
         return {"products": []}
     if not product_ids:

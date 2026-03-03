@@ -1,10 +1,13 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 import structlog
+
+from app.limiter import limiter
 from datetime import datetime
 import sys
 
@@ -48,8 +51,43 @@ structlog.configure(
 
 logger = structlog.get_logger()
 
-# Initialize rate limiter
-limiter = Limiter(key_func=get_remote_address)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown lifecycle. Replaces deprecated on_event."""
+    await db.connect()
+    logger.info("application_started")
+
+    # Index products into ChromaDB for conversational/semantic search
+    from app.services.vector_search import vector_search_service
+    if vector_search_service.is_available and db.is_available:
+        try:
+            rows = await db.fetch_all(
+                "SELECT id, name, category, description, price, in_stock, specifications FROM products"
+            )
+            products = [
+                {
+                    "id": r["id"],
+                    "name": r["name"],
+                    "category": r["category"],
+                    "description": r["description"] or "",
+                    "price": float(r["price"]),
+                    "in_stock": r["in_stock"],
+                    "specifications": r["specifications"] or {},
+                }
+                for r in rows
+            ]
+            if products:
+                vector_search_service.bulk_index(products)
+                logger.info("chromadb_indexed_at_startup", count=len(products))
+        except Exception as e:
+            logger.warning("chromadb_startup_index_failed", error=str(e))
+
+    yield
+
+    await db.disconnect()
+    logger.info("application_shutdown")
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -57,7 +95,8 @@ app = FastAPI(
     description="AI-powered conversational chatbot for cricket equipment store",
     version="1.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # Include routers
@@ -83,6 +122,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if settings.environment == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+    return response
 
 
 @app.middleware("http")
@@ -240,45 +291,6 @@ async def global_exception_handler(request: Request, exc: Exception):
             "timestamp": datetime.utcnow().isoformat()
         }
     )
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database connection on startup (optional if DATABASE_URL not set or invalid)."""
-    await db.connect()
-    logger.info("application_started")
-
-    # Index products into ChromaDB for conversational/semantic search
-    from app.services.vector_search import vector_search_service
-    if vector_search_service.is_available and db.is_available:
-        try:
-            rows = await db.fetch_all(
-                "SELECT id, name, category, description, price, in_stock, specifications FROM products"
-            )
-            products = [
-                {
-                    "id": r["id"],
-                    "name": r["name"],
-                    "category": r["category"],
-                    "description": r["description"] or "",
-                    "price": float(r["price"]),
-                    "in_stock": r["in_stock"],
-                    "specifications": r["specifications"] or {},
-                }
-                for r in rows
-            ]
-            if products:
-                vector_search_service.bulk_index(products)
-                logger.info("chromadb_indexed_at_startup", count=len(products))
-        except Exception as e:
-            logger.warning("chromadb_startup_index_failed", error=str(e))
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Close database connection on shutdown"""
-    await db.disconnect()
-    logger.info("application_shutdown")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,7 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, Body
+from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from fastapi.responses import StreamingResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from app.limiter import limiter
 import uuid
 import structlog
 from datetime import datetime
@@ -16,8 +15,25 @@ from app.services.products import ProductService
 from app.services.vector_search import vector_search_service
 from app.db.database import Database, get_db, DatabaseUnavailableError
 from app.routes.auth import get_current_user_optional
+from app.services.auth_service import create_session_token, decode_session_token
+from app.config import settings
 
 logger = structlog.get_logger()
+
+# About-us intent: bypass LLM for predictable, concise response (avoids duplication)
+ABOUT_US_PATTERNS = [
+    "what is himalayan willow",
+    "what is himalayan",
+    "who are you",
+    "about the store",
+    "tell me about you",
+    "tell me about the store",
+    "what do you sell",
+    "what does himalayan willow",
+    "introduce yourself",
+    "who is himalayan willow",
+]
+ABOUT_US_QUICK_REPLIES = ["Explore Bats", "Explore Balls", "Get Directions"]
 
 
 def _format_product_card(p) -> dict:
@@ -40,24 +56,26 @@ def _format_product_card(p) -> dict:
         "specifications": p.specifications,
     }
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-limiter = Limiter(key_func=get_remote_address)
 
 
 @router.post("/session")
+@limiter.limit("60/minute")
 async def create_session(
-    request: ChatSessionCreate,
+    request: Request,
+    body: ChatSessionCreate,
     db: Database = Depends(get_db),
     current_user: Optional[dict] = Depends(get_current_user_optional),
 ):
     """Create a new chat session. Works without DB (returns in-memory session ID)."""
     session_id = str(uuid.uuid4())
-    user_id = current_user["id"] if current_user else (request.user_id or None)
+    user_id = current_user["id"] if current_user else None
 
     if not db.is_available:
         logger.info("chat_session_created_no_db", session_id=session_id)
         return {
             "success": True,
             "session_id": session_id,
+            "session_token": create_session_token(session_id),
             "started_at": datetime.utcnow().isoformat() + "Z",
         }
 
@@ -73,12 +91,14 @@ async def create_session(
         return {
             "success": True,
             "session_id": result["session_id"],
+            "session_token": create_session_token(result["session_id"]),
             "started_at": result["started_at"].isoformat(),
         }
     except DatabaseUnavailableError:
         return {
             "success": True,
             "session_id": session_id,
+            "session_token": create_session_token(session_id),
             "started_at": datetime.utcnow().isoformat() + "Z",
         }
     except Exception as e:
@@ -87,7 +107,9 @@ async def create_session(
 
 
 @router.post("/message", response_model=ChatResponse)
+@limiter.limit("60/minute")
 async def send_message(
+    request: Request,
     chat_request: ChatMessageRequest,
     llm_service: LLMService = Depends(get_llm_service),
     db: Database = Depends(get_db),
@@ -137,6 +159,30 @@ async def send_message(
         except DatabaseUnavailableError:
             pass
 
+    message_lower = chat_request.message.lower().strip()
+    if any(p in message_lower for p in ABOUT_US_PATTERNS):
+        about_message = (
+            "Himalayan Willow is Nepal's premier cricket equipment store, located in Kathmandu near the Cricket Stadium. "
+            "We offer high-quality cricket gear including bats, balls, and protective equipment."
+        )
+        if settings.store_maps_url:
+            about_message += f" [Get Directions]({settings.store_maps_url}) to visit us today!"
+        else:
+            about_message += " Visit us today!"
+        if db.is_available:
+            try:
+                await db.execute(
+                    "INSERT INTO chat_messages (session_id, sender, message) VALUES ($1, $2, $3)",
+                    session_id, "bot", about_message,
+                )
+            except DatabaseUnavailableError:
+                pass
+        return ChatResponse(
+            message=about_message,
+            quick_replies=ABOUT_US_QUICK_REPLIES,
+            session_id=session_id,
+        )
+
     # Generate LLM response (always works; uses in-memory history when DB unavailable)
     try:
         llm_response = await llm_service.generate_response(
@@ -174,8 +220,6 @@ async def send_message(
             quick_replies=quick_replies,
             session_id=session_id
         )
-
-    message_lower = chat_request.message.lower()
 
     category_keywords = {
         "bat": "bat",
@@ -329,12 +373,15 @@ async def send_message(
         message=llm_response.get("message", ""),
         product_cards=product_cards,
         quick_replies=llm_response.get("quick_replies") or quick_replies or ["Show me bats", "Show me gloves", "Talk to human"],
-        session_id=session_id
+        session_id=session_id,
+        session_token=create_session_token(session_id),
     )
 
 
 @router.post("/stream")
+@limiter.limit("60/minute")
 async def stream_message(
+    request: Request,
     chat_request: ChatMessageRequest,
     llm_service: LLMService = Depends(get_llm_service),
     db: Database = Depends(get_db),
@@ -345,6 +392,27 @@ async def stream_message(
     Uses true token-level streaming from the LLM with Gemini->Groq fallback.
     """
     session_id = chat_request.session_id or str(uuid.uuid4())
+    message_lower = chat_request.message.lower().strip()
+
+    if any(p in message_lower for p in ABOUT_US_PATTERNS):
+        about_message = (
+            "Himalayan Willow is Nepal's premier cricket equipment store, located in Kathmandu near the Cricket Stadium. "
+            "We offer high-quality cricket gear including bats, balls, and protective equipment."
+        )
+        if settings.store_maps_url:
+            about_message += f" [Get Directions]({settings.store_maps_url}) to visit us today!"
+        else:
+            about_message += " Visit us today!"
+
+        async def about_us_generator():
+            yield f"data: {json.dumps({'type': 'start', 'session_id': session_id})}\n\n"
+            yield f"data: {json.dumps({'type': 'complete', 'session_id': session_id, 'message': about_message, 'quick_replies': ABOUT_US_QUICK_REPLIES})}\n\n"
+
+        return StreamingResponse(
+            about_us_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
 
     async def event_generator():
         try:
@@ -372,11 +440,19 @@ async def stream_message(
 
 
 @router.get("/history/{session_id}")
+@limiter.limit("60/minute")
 async def get_chat_history(
+    request: Request,
     session_id: str,
-    db: Database = Depends(get_db)
+    db: Database = Depends(get_db),
+    x_session_token: Optional[str] = Header(None, alias="X-Session-Token"),
 ):
-    """Get chat history for a session. Returns empty when DB unavailable."""
+    """Get chat history for a session. Requires X-Session-Token header (from create_session or send_message response)."""
+    if not x_session_token:
+        raise HTTPException(status_code=401, detail="X-Session-Token header required")
+    decoded = decode_session_token(x_session_token)
+    if not decoded or decoded != session_id:
+        raise HTTPException(status_code=403, detail="Invalid or expired session token")
     if not db.is_available:
         return {
             "success": True,

@@ -12,6 +12,7 @@ logger = structlog.get_logger()
 
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRY_DAYS = 7
+SESSION_TOKEN_EXPIRY_HOURS = 24
 
 
 async def verify_google_token(id_token: str) -> Optional[dict]:
@@ -72,6 +73,28 @@ def decode_jwt(token: str) -> Optional[dict]:
             algorithms=[JWT_ALGORITHM],
         )
         return payload
+    except jwt.InvalidTokenError:
+        return None
+
+
+def create_session_token(session_id: str) -> str:
+    """Create a short-lived JWT for chat session ownership. Used for get_chat_history auth."""
+    payload = {
+        "session_id": session_id,
+        "typ": "session",
+        "exp": datetime.utcnow() + timedelta(hours=SESSION_TOKEN_EXPIRY_HOURS),
+        "iat": datetime.utcnow(),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=JWT_ALGORITHM)
+
+
+def decode_session_token(token: str) -> Optional[str]:
+    """Decode session token and return session_id if valid."""
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[JWT_ALGORITHM])
+        if payload.get("typ") != "session":
+            return None
+        return payload.get("session_id")
     except jwt.InvalidTokenError:
         return None
 

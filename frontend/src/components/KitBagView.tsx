@@ -146,9 +146,9 @@ const KitBagView: React.FC<{ open: boolean; onClose: () => void }> = ({
             animate={{ x: 0 }}
             exit={{ x: "100%" }}
             transition={{ type: "spring", damping: 25, stiffness: 300 }}
-            className="absolute right-0 top-0 bottom-0 w-72 bg-[#1A1A1A] border-l border-white/10 z-30 overflow-y-auto"
+            className="absolute right-0 top-0 bottom-0 w-[min(100%,18rem)] sm:w-72 bg-[#1A1A1A] border-l border-white/10 z-30 overflow-y-auto shadow-premium-lg"
           >
-            <div className="p-4">
+            <div className="p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-bold text-white text-sm flex items-center gap-2">
                   <span>{"\u{1F392}"}</span> My Kit Bag
@@ -175,7 +175,7 @@ const KitBagView: React.FC<{ open: boolean; onClose: () => void }> = ({
 
               {/* Profile summary */}
               {Object.keys(profileInfo).length > 0 && (
-                <div className="bg-white/5 border border-white/10 rounded-lg p-3 mb-4">
+                <div className="bg-white/5 border border-white/10 rounded-xl p-3 mb-4 shadow-premium-sm">
                   <p className="text-[10px] text-white/40 uppercase tracking-wider mb-2 font-medium">
                     Your Profile
                   </p>
@@ -192,7 +192,7 @@ const KitBagView: React.FC<{ open: boolean; onClose: () => void }> = ({
               )}
 
               {/* Cart items */}
-              <div className="bg-white/5 border border-white/10 rounded-lg p-3 mb-4">
+              <div className="bg-white/5 border border-white/10 rounded-xl p-3 mb-4 shadow-premium-sm">
                 <div className="flex justify-between items-center mb-2">
                   <span className="text-xs text-white/60">Items in Cart</span>
                   <span className="text-sm font-bold text-white">
@@ -306,7 +306,7 @@ const KitBagView: React.FC<{ open: boolean; onClose: () => void }> = ({
                     return (
                       <div
                         key={idx}
-                        className="bg-white/5 border border-white/10 rounded-lg p-2.5"
+                        className="bg-white/5 border border-white/10 rounded-xl p-2.5 shadow-premium-sm"
                       >
                         <div className="flex gap-2 items-start">
                           <div className="w-8 h-8 rounded bg-white/5 flex items-center justify-center text-lg flex-shrink-0">

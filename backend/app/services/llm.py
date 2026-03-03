@@ -88,6 +88,7 @@ HARD RULES
 2) Keep responses concise: 2-3 sentences, then let product cards speak.
 3) Always include quick replies for next actions.
 4) NEVER gate product display behind questions. Show first, refine later.
+5) Never repeat the same information twice in a single response. Each sentence or fact should appear only once.
 
 TONE & VOICE
 - Friendly but efficient — like a helpful shopkeeper who knows you're busy
@@ -286,6 +287,34 @@ class LLMService:
             text = text[:idx].strip()
         return text.strip()
 
+    def _deduplicate_message(self, text: str) -> str:
+        """Remove duplicated paragraphs/sentences from LLM output. Returns original if no duplication."""
+        if not text or not isinstance(text, str) or len(text) < 100:
+            return text
+        text = text.strip()
+
+        def _norm(s: str) -> str:
+            return " ".join(s.lower().split())
+
+        mid = len(text) // 2
+        first_norm = _norm(text[:mid])
+        second_norm = _norm(text[mid:])
+        if first_norm == second_norm:
+            for i in range(mid - 1, max(0, mid - 150), -1):
+                if i >= 0 and i < len(text) and text[i] in ".!?":
+                    candidate = text[: i + 1].strip()
+                    if len(candidate) > 20:
+                        return candidate
+            return text[:mid].strip()
+        if len(second_norm) >= len(first_norm) * 0.8 and second_norm.startswith(first_norm):
+            for i in range(mid - 1, max(0, mid - 150), -1):
+                if i >= 0 and i < len(text) and text[i] in ".!?":
+                    candidate = text[: i + 1].strip()
+                    if len(candidate) > 20:
+                        return candidate
+            return text[:mid].strip()
+        return text
+
     # ------------------------------------------------------------------
     # Core LLM call with Gemini -> Groq fallback
     # ------------------------------------------------------------------
@@ -389,8 +418,9 @@ class LLMService:
                 return
 
         display_message, quick_replies, product_cards = self._parse_llm_response(full_text)
+        display_message = self._deduplicate_message(display_message or full_text)
 
-        memory.save_context({"input": sanitized_message}, {"output": display_message or full_text})
+        memory.save_context({"input": sanitized_message}, {"output": display_message})
 
         complete_event: Dict = {
             "type": "complete",
@@ -398,7 +428,7 @@ class LLMService:
             "language": language,
             "provider": provider_used,
             "quick_replies": quick_replies or ["Show me bats", "Show me gloves", "Talk to human"],
-            "message": display_message or full_text,
+            "message": display_message,
         }
         if product_cards:
             complete_event["product_cards"] = product_cards
@@ -446,6 +476,7 @@ class LLMService:
                 return self._get_fallback_response()
 
             display_message, quick_replies, product_cards = self._parse_llm_response(response_content)
+            display_message = self._deduplicate_message(display_message)
 
             memory.save_context({"input": sanitized_message}, {"output": display_message})
 

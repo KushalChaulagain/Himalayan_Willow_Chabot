@@ -1,4 +1,5 @@
-import React, { lazy, Suspense, useRef } from "react";
+import { motion } from "framer-motion";
+import React, { lazy, Suspense, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useChatContext } from "../contexts/ChatContext";
@@ -6,6 +7,8 @@ import { Message } from "../types";
 import KnockInCard from "./KnockInCard";
 import ProductCard from "./ProductCard";
 import QuickReplies from "./QuickReplies";
+
+import HimalyanWillowLogo from "../Himalyan_Willow_image.png";
 
 const ConfettiCelebration = lazy(() => import("./ConfettiCelebration"));
 const TrackingMap = lazy(() => import("./TrackingMap"));
@@ -16,11 +19,24 @@ interface ChatMessageProps {
 
 const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.sender === "user";
-  const { retryMessage } = useChatContext();
+  const { retryMessage, streamingMessageId } = useChatContext();
+  const isStreaming =
+    !isUser && streamingMessageId !== null && message.id === streamingMessageId;
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
 
   const hasProducts = message.productCards && message.productCards.length > 0;
   const productCount = message.productCards?.length || 0;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(message.message);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const scroll = (direction: "left" | "right") => {
     if (!scrollRef.current) return;
@@ -33,15 +49,37 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
 
   const ic = message.interactiveContent;
 
+  const timestamp = message.timestamp.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+    <motion.div
+      initial={{ opacity: 0, y: isUser ? -8 : 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
+      className={`flex gap-2 ${isUser ? "justify-end" : "justify-start"} mx-auto max-w-chat w-full px-1 xs:px-2 sm:px-0`}
+    >
+      {!isUser && (
+        <div
+          className="shrink-0 w-8 h-8 xs:w-9 xs:h-9 rounded-sharp overflow-hidden bg-[#262626] flex items-center justify-center border border-white/10 shadow-premium-sm mt-1"
+          aria-hidden
+        >
+          <img
+            src={HimalyanWillowLogo}
+            alt="Himalayan Willow"
+            className="w-full h-full object-contain p-0.5"
+          />
+        </div>
+      )}
       <div
-        className={`${isUser ? "max-w-[80%]" : "max-w-[95%]"} ${isUser ? "order-2" : "order-1"}`}
+        className={`${isUser ? "max-w-[80%] order-2" : "max-w-[95%] order-1 flex-1 min-w-0"}`}
       >
         <div
-          className={`rounded-card p-3 border ${
+          className={`rounded-2xl px-3 xs:px-4 py-2.5 border shadow-premium-sm ${
             isUser
-              ? "bg-[#262626] text-white border-white/10"
+              ? "bg-[#333] text-white border-white/10"
               : message.failed
                 ? "bg-[#262626] text-white border-red-500/40"
                 : "bg-[#262626] text-white border-white/10"
@@ -56,9 +94,23 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             />
           )}
 
-          <div className="text-sm leading-relaxed text-white chat-message-content">
+          <div className="text-xs xs:text-sm leading-relaxed text-white chat-message-content">
             {isUser ? (
               <p className="whitespace-pre-wrap">{message.message}</p>
+            ) : isStreaming ? (
+              <>
+                {message.message === "" || message.message === "..." ? (
+                  <span className="text-white/60 text-sm">Typing...</span>
+                ) : (
+                  <p className="whitespace-pre-wrap mb-0 inline">
+                    {message.message}
+                    <span
+                      className="inline-block w-0.5 h-4 ml-0.5 bg-amber-400 align-middle animate-typing-cursor"
+                      aria-hidden
+                    />
+                  </p>
+                )}
+              </>
             ) : (
               <>
                 <ReactMarkdown
@@ -98,36 +150,102 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
               </>
             )}
           </div>
-          <p className="text-xs mt-1 text-white/60">
-            {message.timestamp.toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}
-          </p>
-        </div>
 
-        {message.failed && (
-          <button
-            onClick={() => retryMessage(message.id)}
-            className="mt-2 flex items-center gap-1.5 text-sm text-red-400 hover:text-red-300 transition-colors"
-            aria-label="Retry sending message"
+          {/* Footer: timestamp + action bar */}
+          <div
+            className={`mt-1 flex min-h-6 items-center gap-1 ${
+              isUser ? "justify-end" : "justify-start"
+            }`}
           >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+            {!isUser && (
+              <div className="flex gap-1 text-white/50">
+                <button
+                  onClick={handleCopy}
+                  className="rounded p-1 hover:bg-white/10 hover:text-white/80 transition-colors"
+                  aria-label="Copy message"
+                  title="Copy"
+                >
+                  {copied ? (
+                    <svg
+                      className="w-4 h-4 text-amber-400"
+                      fill="currentColor"
+                      viewBox="0 0 20 20"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                  ) : (
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
+                      />
+                    </svg>
+                  )}
+                </button>
+                {message.failed && (
+                  <button
+                    onClick={() => retryMessage(message.id)}
+                    className="rounded p-1 hover:bg-white/10 hover:text-red-400 transition-colors"
+                    aria-label="Retry sending message"
+                    title="Retry"
+                  >
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                      />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            )}
+            {isUser && message.failed && (
+              <button
+                onClick={() => retryMessage(message.id)}
+                className="rounded p-1 text-red-400 hover:bg-white/10 hover:text-red-300 transition-colors mr-1"
+                aria-label="Retry sending message"
+                title="Retry"
+              >
+                <svg
+                  className="w-4 h-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                  />
+                </svg>
+              </button>
+            )}
+            <span
+              className={`text-[11px] text-white/50 ${isUser ? "ml-auto" : ""}`}
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-            Retry
-          </button>
-        )}
+              {timestamp}
+            </span>
+          </div>
+        </div>
 
         {/* Interactive Content */}
         {ic && (
@@ -213,7 +331,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
 
             <div
               ref={scrollRef}
-              className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent"
+              className="flex gap-2 xs:gap-3 overflow-x-auto pb-2 -mx-1 xs:mx-0 px-1 xs:px-0 scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent scroll-smooth"
               style={{ scrollSnapType: "x mandatory" }}
             >
               {message.productCards!.map((card) => (
@@ -231,7 +349,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             <QuickReplies options={message.quickReplies} />
           )}
       </div>
-    </div>
+    </motion.div>
   );
 };
 

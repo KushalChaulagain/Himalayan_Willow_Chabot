@@ -1,6 +1,8 @@
 import { AnimatePresence, motion } from "framer-motion";
 import React, { useEffect, useState } from "react";
 import { useChatContext } from "../contexts/ChatContext";
+import EsewaIcon from "../images/Esewa_icon.svg";
+import KhaltiIcon from "../images/Khalti_icon.svg";
 import { ProductCard as ProductCardType } from "../types";
 import { loadProfile, saveProfile } from "../utils/userProfile";
 
@@ -11,6 +13,14 @@ interface InstantBuyModalProps {
 
 type PaymentMethod = "esewa" | "khalti" | "cod";
 
+const NEPAL_MOBILE_PREFIXES = ["984", "980", "981"];
+
+const isValidNepalPhone = (phone: string): boolean => {
+  const cleaned = phone.replace(/\D/g, "");
+  if (cleaned.length !== 10) return false;
+  return NEPAL_MOBILE_PREFIXES.some((p) => cleaned.startsWith(p));
+};
+
 const PAYMENT_METHODS: Array<{
   id: PaymentMethod;
   label: string;
@@ -20,19 +30,19 @@ const PAYMENT_METHODS: Array<{
   {
     id: "esewa",
     label: "eSewa",
-    icon: "💚",
+    icon: EsewaIcon,
     description: "Pay via eSewa wallet",
   },
   {
     id: "khalti",
     label: "Khalti",
-    icon: "💜",
+    icon: KhaltiIcon,
     description: "Pay via Khalti wallet",
   },
   {
     id: "cod",
     label: "Cash on Delivery",
-    icon: "💵",
+    icon: "/payments/cod.svg",
     description: "Pay when you receive",
   },
 ];
@@ -56,47 +66,69 @@ const InstantBuyModal: React.FC<InstantBuyModalProps> = ({
     if (profile) {
       if (profile.phone) setPhone(profile.phone);
       if (profile.city) setCity(profile.city);
+      if (profile.address) setAddress(profile.address);
     }
   }, []);
+
+  const getButtonLabel = (): string => {
+    if (loading) return "Processing...";
+    if (paymentMethod === "cod") return "Complete Order";
+    if (paymentMethod === "esewa")
+      return `Pay with eSewa — NPR ${product.price.toLocaleString()}`;
+    if (paymentMethod === "khalti")
+      return `Pay with Khalti — NPR ${product.price.toLocaleString()}`;
+    return `Confirm & Pay NPR ${product.price.toLocaleString()}`;
+  };
 
   const handleConfirm = async () => {
     if (!paymentMethod) {
       setError("Please select a payment method");
       return;
     }
-    if (!phone || phone.length < 10) {
-      setError("Please enter a valid phone number");
+    if (!isValidNepalPhone(phone)) {
+      setError("Enter a valid Nepal mobile number (984/980/981)");
       return;
     }
     if (!city.trim()) {
       setError("Please enter your city");
       return;
     }
+    if (!address.trim()) {
+      setError("Please enter your delivery address");
+      return;
+    }
 
     setError("");
     setLoading(true);
 
-    saveProfile({ phone, city });
+    saveProfile({ phone, city, address: address.trim() });
 
     try {
       const result = await apiClient.createOrder({
         session_id: sessionId || `temp-${Date.now()}`,
         payment_method: paymentMethod,
         customer_phone: phone,
-        delivery_address: { city, address, country: "Nepal" },
+        delivery_address: {
+          city,
+          address: address.trim(),
+          street: address.trim(),
+          country: "Nepal",
+        },
         items: [
           {
             product_id: product.id,
             product_name: product.name,
             product_sku: `SKU-${product.id}`,
-            unit_price: product.price,
+            unit_price: Math.round(product.price * 100),
             quantity: 1,
-            subtotal: product.price,
+            subtotal: Math.round(product.price * 100),
           },
         ],
       });
 
-      if (result) {
+      if ("error" in result) {
+        setError(result.error);
+      } else {
         onClose();
         addBotMessage(
           `Great choice, Skipper! Your order for ${product.name} has been placed.\n\nOrder ID: ${result.order_id}\nTotal: NPR ${result.total_amount.toLocaleString()}\nPayment: ${paymentMethod.toUpperCase()}\n\nYour gear is heading to the pavilion!`,
@@ -112,8 +144,6 @@ const InstantBuyModal: React.FC<InstantBuyModalProps> = ({
             ],
           },
         );
-      } else {
-        setError("Order creation failed. Please try again.");
       }
     } catch {
       setError("Something went wrong. Please try again.");
@@ -140,7 +170,7 @@ const InstantBuyModal: React.FC<InstantBuyModalProps> = ({
           animate={{ y: 0, opacity: 1 }}
           exit={{ y: "100%", opacity: 0 }}
           transition={{ type: "spring", damping: 25, stiffness: 300 }}
-          className="relative bg-[#1A1A1A] border border-white/10 rounded-t-2xl sm:rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto z-10"
+          className="relative bg-[#1A1A1A] border border-white/10 rounded-t-2xl sm:rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto z-10 shadow-card-2"
         >
           {/* Handle bar */}
           <div className="flex justify-center pt-3 pb-1 sm:hidden">
@@ -152,7 +182,6 @@ const InstantBuyModal: React.FC<InstantBuyModalProps> = ({
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-lg font-bold text-white">Quick Checkout</h3>
-                <p className="text-xs text-white/50 mt-0.5">Continue as guest — no account needed</p>
               </div>
               <button
                 onClick={onClose}
@@ -202,7 +231,7 @@ const InstantBuyModal: React.FC<InstantBuyModalProps> = ({
 
             {/* Payment method selection */}
             <div className="mb-4">
-              <label className="text-sm text-white/70 font-medium block mb-2">
+              <label className="text-sm text-white/90 font-medium block mb-2">
                 Payment Method
               </label>
               <div className="grid grid-cols-3 gap-2">
@@ -212,11 +241,19 @@ const InstantBuyModal: React.FC<InstantBuyModalProps> = ({
                     onClick={() => setPaymentMethod(pm.id)}
                     className={`flex flex-col items-center justify-center p-3 min-h-[44px] rounded-lg border transition-all ${
                       paymentMethod === pm.id
-                        ? "border-white/40 bg-white/10"
+                        ? "border-white/40 bg-white/10 shadow-default"
                         : "border-white/10 bg-white/5 hover:border-white/20"
                     }`}
                   >
-                    <span className="text-xl mb-1">{pm.icon}</span>
+                    {/\.(svg|png|webp)$/i.test(pm.icon) ? (
+                      <img
+                        src={pm.icon}
+                        alt={pm.label}
+                        className="w-10 h-10 object-contain mb-1"
+                      />
+                    ) : (
+                      <span className="text-xl mb-1">{pm.icon}</span>
+                    )}
                     <span className="text-xs font-semibold text-white">
                       {pm.label}
                     </span>
@@ -229,11 +266,11 @@ const InstantBuyModal: React.FC<InstantBuyModalProps> = ({
             </div>
 
             {/* Delivery info */}
-            <div className="space-y-3 mb-4">
+            <div className="space-y-4 mb-4">
               <div>
                 <label
                   htmlFor="buy-phone"
-                  className="text-sm text-white/70 font-medium block mb-1"
+                  className="mb-3 block text-sm font-medium text-white/90"
                 >
                   Phone Number
                 </label>
@@ -242,14 +279,14 @@ const InstantBuyModal: React.FC<InstantBuyModalProps> = ({
                   type="tel"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  placeholder="98XXXXXXXX"
-                  className="w-full min-h-[44px] bg-[#262626] border border-white/10 rounded-lg px-3 py-2.5 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-white/30 text-sm"
+                  placeholder="10 digits, e.g. 9841234567"
+                  className="w-full rounded-lg border-[1.5px] border-stroke bg-[#262626] py-3 px-5 font-medium text-white placeholder-white/50 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/30 disabled:cursor-default disabled:opacity-50"
                 />
               </div>
               <div>
                 <label
                   htmlFor="buy-city"
-                  className="text-sm text-white/70 font-medium block mb-1"
+                  className="mb-3 block text-sm font-medium text-white/90"
                 >
                   City
                 </label>
@@ -259,38 +296,54 @@ const InstantBuyModal: React.FC<InstantBuyModalProps> = ({
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
                   placeholder="Kathmandu"
-                  className="w-full min-h-[44px] bg-[#262626] border border-white/10 rounded-lg px-3 py-2.5 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-white/30 text-sm"
+                  className="w-full rounded-lg border-[1.5px] border-stroke bg-[#262626] py-3 px-5 font-medium text-white placeholder-white/50 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/30 disabled:cursor-default disabled:opacity-50"
                 />
               </div>
               <div>
                 <label
                   htmlFor="buy-address"
-                  className="text-sm text-white/70 font-medium block mb-1"
+                  className="mb-3 block text-sm font-medium text-white/90"
                 >
-                  Address <span className="text-white/30">(optional)</span>
+                  Delivery Address <span className="text-amber-400">*</span>
                 </label>
                 <input
                   id="buy-address"
                   type="text"
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
-                  placeholder="Street, area..."
-                  className="w-full min-h-[44px] bg-[#262626] border border-white/10 rounded-lg px-3 py-2.5 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-white/30 text-sm"
+                  placeholder="Street, area, ward..."
+                  required
+                  aria-required="true"
+                  aria-invalid={!!error && error.includes("address")}
+                  aria-describedby={error ? "checkout-error" : undefined}
+                  className="w-full rounded-lg border-[1.5px] border-stroke bg-[#262626] py-3 px-5 font-medium text-white placeholder-white/50 outline-none transition focus:border-amber-500 focus:ring-2 focus:ring-amber-500/30 disabled:cursor-default disabled:opacity-50"
                 />
               </div>
             </div>
 
-            {error && <p className="text-xs text-red-400 mb-3">{error}</p>}
+            {/* Delivery summary */}
+            <div className="text-xs text-white/80 mb-4 py-2 px-3 bg-white/5 rounded-lg border border-white/10">
+              Delivery: Free · Est. Arrival: 2–4 days (Valley) / 5–7 days
+              (outside)
+            </div>
+
+            {error && (
+              <div
+                id="checkout-error"
+                role="alert"
+                className="mb-4 flex border-l-6 border-red-500 bg-red-500/10 px-4 py-3 rounded-r"
+              >
+                <p className="text-sm text-red-400 leading-relaxed">{error}</p>
+              </div>
+            )}
 
             {/* Confirm button */}
             <button
               onClick={handleConfirm}
               disabled={loading}
-              className="w-full min-h-[44px] bg-amber-500 hover:bg-amber-400 disabled:opacity-60 disabled:cursor-wait text-[#1A1A1A] py-3 rounded-lg font-bold text-sm transition-colors"
+              className="w-full min-h-[44px] bg-amber-500 hover:bg-amber-400 active:scale-[0.98] disabled:opacity-60 disabled:cursor-wait text-[#1A1A1A] py-3 rounded-lg font-bold text-sm transition-colors"
             >
-              {loading
-                ? "Processing..."
-                : `Confirm & Pay NPR ${product.price.toLocaleString()}`}
+              {getButtonLabel()}
             </button>
 
             <p className="text-[10px] text-white/30 text-center mt-3">

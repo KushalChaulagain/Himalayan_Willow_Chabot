@@ -8,24 +8,24 @@ import React, {
     useState,
 } from "react";
 import APIClient from "../services/api";
-import { ChatConfig, InteractiveContent, Message } from "../types";
-import {
-    getSavedSessionId,
-    isReturningUser,
-    loadProfile,
-    saveProfile,
-} from "../utils/userProfile";
+import { ChatConfig, InteractiveContent, Message, ProductCard } from "../types";
+import { getSavedSessionId, loadProfile, saveProfile } from "../utils/userProfile";
 import { useAuth } from "./AuthContext";
 
 const RESPONSE_TIMEOUT_MS = 30_000;
+
+const STREAMING_CHARS_PER_TICK = 1;
+const DEFAULT_STREAM_SPEED_MS = 35;
 
 interface ChatContextType {
   messages: Message[];
   isTyping: boolean;
   isStreaming: boolean;
+  streamingMessageId: string | null;
   isOnline: boolean;
   sessionId: string | null;
   sendMessage: (text: string, useStreaming?: boolean) => Promise<void>;
+  stopStream: () => void;
   retryMessage: (messageId: string) => void;
   addToCart: (productId: number) => void;
   removeFromCartAt: (index: number) => void;
@@ -55,7 +55,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({
   children,
   config,
 }) => {
-  const { token, user } = useAuth();
+  const { token } = useAuth();
   const tokenRef = useRef<string | null>(null);
   useEffect(() => {
     tokenRef.current = token;
@@ -81,37 +81,19 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({
             : {},
       }),
   );
-  const [, setStreamingMessageId] = useState<string | null>(null);
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const responseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const greetingFetched = useRef(false);
-
-  // Fetch dynamic greeting on mount (personalized when user/cart available)
-  useEffect(() => {
-    if (greetingFetched.current) return;
-    greetingFetched.current = true;
-
-    const returning = isReturningUser();
-
-    apiClient
-      .fetchGreeting(
-        sessionId || undefined,
-        returning,
-        user?.id,
-        cartItems.length > 0 ? cartItems : undefined,
-      )
-      .then((greeting) => {
-        const initialMessage: Message = {
-          id: "greeting-1",
-          sender: "bot",
-          message: greeting.message,
-          timestamp: new Date(),
-          quickReplies: greeting.quick_replies,
-          productCards: greeting.product_cards,
-        };
-        setMessages([initialMessage]);
-        saveProfile({ last_visit: new Date().toISOString() });
-      });
-  }, [apiClient, sessionId, user?.id, cartItems]);
+  const streamAbortControllerRef = useRef<AbortController | null>(null);
+  const streamingAccumulatedRef = useRef<string>("");
+  const streamingDisplayedLengthRef = useRef<number>(0);
+  const streamingTypingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const streamingPendingCompleteRef = useRef<{
+    message: string;
+    quick_replies?: string[];
+    product_cards?: ProductCard[];
+    interactive_content?: InteractiveContent;
+    session_id?: string;
+  } | null>(null);
 
   // Network status detection
   useEffect(() => {
@@ -198,20 +180,92 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({
 
         if (useStreaming) {
           setIsStreaming(true);
+          streamAbortControllerRef.current = new AbortController();
 
           const streamingMsgId = (Date.now() + 1).toString();
           setStreamingMessageId(streamingMsgId);
+          streamingAccumulatedRef.current = "";
+          streamingDisplayedLengthRef.current = 0;
+
+          if (streamingTypingIntervalRef.current) {
+            clearInterval(streamingTypingIntervalRef.current);
+            streamingTypingIntervalRef.current = null;
+          }
 
           const streamingMessage: Message = {
             id: streamingMsgId,
             sender: "bot",
-            message: "...",
+            message: "",
             timestamp: new Date(),
             retryText: text,
           };
           setMessages((prev) => [...prev, streamingMessage]);
 
+          streamingTypingIntervalRef.current = setInterval(() => {
+            const accumulated = streamingAccumulatedRef.current;
+            const currentDisplayed = streamingDisplayedLengthRef.current;
+
+            if (currentDisplayed < accumulated.length) {
+              const nextLen = Math.min(
+                currentDisplayed + STREAMING_CHARS_PER_TICK,
+                accumulated.length,
+              );
+              streamingDisplayedLengthRef.current = nextLen;
+              const displayedText = accumulated.slice(0, nextLen);
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === streamingMsgId ? { ...m, message: displayedText } : m,
+                ),
+              );
+              return;
+            }
+
+            const pending = streamingPendingCompleteRef.current;
+            if (pending) {
+              if (streamingTypingIntervalRef.current) {
+                clearInterval(streamingTypingIntervalRef.current);
+                streamingTypingIntervalRef.current = null;
+              }
+              streamingPendingCompleteRef.current = null;
+              streamAbortControllerRef.current = null;
+              streamingAccumulatedRef.current = "";
+              if (responseTimeoutRef.current)
+                clearTimeout(responseTimeoutRef.current);
+              setIsStreaming(false);
+              setStreamingMessageId(null);
+
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === streamingMsgId
+                    ? {
+                        ...msg,
+                        message: pending.message,
+                        quickReplies: pending.quick_replies,
+                        productCards: pending.product_cards,
+                        interactiveContent: pending.interactive_content,
+                        failed: false,
+                      }
+                    : msg,
+                ),
+              );
+
+              if (
+                pending.session_id &&
+                pending.session_id !== currentSessionId
+              ) {
+                setSessionId(pending.session_id);
+                saveProfile({ session_id: pending.session_id });
+              }
+            }
+          }, config.streamSpeedMs ?? DEFAULT_STREAM_SPEED_MS);
+
           responseTimeoutRef.current = setTimeout(() => {
+            if (streamingTypingIntervalRef.current) {
+              clearInterval(streamingTypingIntervalRef.current);
+              streamingTypingIntervalRef.current = null;
+            }
+            streamingPendingCompleteRef.current = null;
+            streamingAccumulatedRef.current = "";
             setIsStreaming(false);
             setIsTyping(false);
             setStreamingMessageId(null);
@@ -233,60 +287,55 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({
           await apiClient.sendMessageStream(
             text,
             currentSessionId,
-            (_chunk) => {
-              // Only the final parsed message from the "complete" event is shown.
+            (chunk) => {
+              streamingAccumulatedRef.current += chunk;
             },
             (response) => {
+              const fullMessage = response.message || streamingAccumulatedRef.current;
+              streamingAccumulatedRef.current = fullMessage;
+              streamingPendingCompleteRef.current = {
+                message: fullMessage,
+                quick_replies: response.quick_replies,
+                product_cards: response.product_cards,
+                interactive_content: response.interactive_content as
+                  | InteractiveContent
+                  | undefined,
+                session_id: response.session_id,
+              };
               if (responseTimeoutRef.current)
                 clearTimeout(responseTimeoutRef.current);
-              setIsStreaming(false);
-              setStreamingMessageId(null);
-
-              setMessages((prev) =>
-                prev.map((msg) =>
-                  msg.id === streamingMsgId
-                    ? {
-                        ...msg,
-                        message: response.message || msg.message,
-                        quickReplies: response.quick_replies,
-                        productCards: response.product_cards,
-                        interactiveContent: response.interactive_content as
-                          | InteractiveContent
-                          | undefined,
-                        failed: false,
-                      }
-                    : msg,
-                ),
-              );
-
-              if (
-                response.session_id &&
-                response.session_id !== currentSessionId
-              ) {
-                setSessionId(response.session_id);
-                saveProfile({ session_id: response.session_id });
+            },
+            (error) => {
+              if (streamingTypingIntervalRef.current) {
+                clearInterval(streamingTypingIntervalRef.current);
+                streamingTypingIntervalRef.current = null;
               }
-            },
-            (_error) => {
+              streamingPendingCompleteRef.current = null;
+              streamAbortControllerRef.current = null;
+              streamingAccumulatedRef.current = "";
               if (responseTimeoutRef.current)
                 clearTimeout(responseTimeoutRef.current);
               setIsStreaming(false);
               setStreamingMessageId(null);
 
+              const isAborted = error?.name === "AbortError";
+
               setMessages((prev) =>
-                prev.map((msg) =>
-                  msg.id === streamingMsgId
+                prev.map((m) =>
+                  m.id === streamingMsgId
                     ? {
-                        ...msg,
-                        message:
-                          msg.message ||
-                          "I encountered an error. Please try again.",
-                        failed: true,
+                        ...m,
+                        message: isAborted
+                          ? (m.message || "Response stopped.")
+                          : (m.message || "I encountered an error. Please try again."),
+                        failed: !isAborted,
+                        quickReplies: isAborted ? undefined : ["Retry", "Talk to human"],
                       }
-                    : msg,
+                    : m,
                 ),
               );
             },
+            { signal: streamAbortControllerRef.current?.signal },
           );
 
           return;
@@ -346,6 +395,13 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({
     [sessionId, apiClient, isOnline],
   );
 
+  const stopStream = useCallback(() => {
+    if (streamAbortControllerRef.current) {
+      streamAbortControllerRef.current.abort();
+      streamAbortControllerRef.current = null;
+    }
+  }, []);
+
   const retryMessage = useCallback(
     (messageId: string) => {
       const msg = messages.find((m) => m.id === messageId);
@@ -379,9 +435,11 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({
         messages,
         isTyping,
         isStreaming,
+        streamingMessageId,
         isOnline,
         sessionId,
         sendMessage,
+        stopStream,
         retryMessage,
         addToCart,
         removeFromCartAt,

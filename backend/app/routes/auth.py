@@ -11,11 +11,9 @@ from app.services.auth_service import (
     get_or_create_user,
 )
 from app.db.database import Database, get_db
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from app.limiter import limiter
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
-limiter = Limiter(key_func=get_remote_address)
 
 
 class GoogleAuthRequest(BaseModel):

@@ -100,7 +100,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
   if (layout === "compact") {
     return (
-      <div className="bg-[#222] border border-white/10 rounded-lg p-2.5 hover:border-white/20 transition-all min-w-[160px] max-w-[180px] flex-shrink-0">
+      <div className="bg-[#222] border border-white/10 rounded-lg p-2 hover:border-white/20 hover:shadow-premium-sm transition-all duration-200 min-w-[120px] xs:min-w-[140px] sm:min-w-[160px] max-w-[180px] flex-shrink-0">
         <div
           className={`relative w-full aspect-square rounded-md overflow-hidden bg-gradient-to-br ${gradient} mb-2`}
         >
@@ -160,7 +160,7 @@ const ProductCard: React.FC<ProductCardProps> = ({
 
   return (
     <>
-      <div className="bg-[#222] border border-white/10 rounded-xl overflow-hidden hover:border-white/25 group-hover:shadow-[0_0_20px_rgba(245,158,11,0.2)] transition-all duration-300 group w-[220px] flex-shrink-0">
+      <div className="bg-[#222] border border-white/10 rounded-xl overflow-hidden shadow-premium-sm hover:border-white/25 hover:shadow-premium group-hover:shadow-premium-glow transition-all duration-300 group w-[170px] xs:w-[200px] sm:w-[220px] flex-shrink-0">
         {/* Product Image(s) */}
         <div
           className={`relative w-full aspect-[4/3] overflow-hidden bg-gradient-to-br ${gradient}`}
@@ -289,20 +289,20 @@ const ProductCard: React.FC<ProductCardProps> = ({
             <button
               onClick={handleAddToCart}
               disabled={!product.in_stock}
-              className="flex-1 bg-white hover:bg-white/90 disabled:opacity-40 disabled:cursor-not-allowed text-[#1A1A1A] text-xs py-2 px-2 rounded-lg font-semibold transition-colors min-h-[44px]"
+              className="flex-1 bg-white hover:bg-white/90 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed text-[#1A1A1A] text-xs py-2 px-2 rounded-lg font-semibold transition-colors min-h-[44px]"
             >
               Add to Cart
             </button>
             <button
               onClick={() => setShowBuyModal(true)}
               disabled={!product.in_stock}
-              className="bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-[#1A1A1A] text-xs py-2 px-2 rounded-lg font-semibold transition-colors min-h-[44px] min-w-[44px]"
+              className="bg-amber-500 hover:bg-amber-400 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed text-[#1A1A1A] text-xs py-2 px-2 rounded-lg font-semibold transition-colors min-h-[44px] min-w-[44px]"
             >
               Buy Now
             </button>
             <button
               onClick={handleLearnMore}
-              className="bg-transparent hover:bg-white/10 border border-white/20 text-white text-xs py-2 px-2 rounded-lg transition-colors min-h-[44px] min-w-[44px]"
+              className="bg-transparent hover:bg-white/10 active:scale-[0.98] border border-white/20 text-white text-xs py-2 px-2 rounded-lg transition-colors min-h-[44px] min-w-[44px]"
             >
               Details
             </button>

@@ -61,6 +61,8 @@ export interface ChatConfig {
   apiUrl: string;
   storeId: number;
   googleClientId?: string;
+  /** React-ChatBotify-style: ms per character when streaming (default 35). Higher = slower typing. */
+  streamSpeedMs?: number;
 }
 
 export interface ChatResponse {
@@ -68,6 +70,7 @@ export interface ChatResponse {
   product_cards?: ProductCard[];
   quick_replies?: string[];
   session_id: string;
+  session_token?: string;
   action?: string;
   action_data?: any;
   interactive_content?: InteractiveContent;
@@ -78,6 +81,7 @@ export interface UserProfile {
   name?: string;
   phone?: string;
   city?: string;
+  address?: string;
   playing_level?: string;
   preferred_surface?: string;
   budget_range?: string;

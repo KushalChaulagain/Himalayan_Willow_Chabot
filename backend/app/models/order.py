@@ -1,7 +1,10 @@
-from pydantic import BaseModel, Field
+import re
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional, List, Dict
 from datetime import datetime
 from enum import Enum
+
+NEPAL_MOBILE_PREFIXES = ("984", "980", "981")
 
 
 class OrderStatus(str, Enum):
@@ -72,6 +75,26 @@ class OrderCreate(BaseModel):
     delivery_address: Dict
     customer_phone: str
     customer_email: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_delivery_and_phone(self) -> "OrderCreate":
+        """Validate delivery address and phone for physical orders."""
+        phone = self.customer_phone or ""
+        cleaned = re.sub(r"\D", "", phone)
+        if len(cleaned) != 10 or not any(
+            cleaned.startswith(p) for p in NEPAL_MOBILE_PREFIXES
+        ):
+            raise ValueError(
+                "Invalid phone number. Use 10-digit Nepal mobile (984/980/981)."
+            )
+        addr = self.delivery_address or {}
+        street = (addr.get("street") or addr.get("address") or "").strip()
+        city = (addr.get("city") or "").strip()
+        if not street or not city:
+            raise ValueError(
+                "Delivery address is required. Please provide city and street/area."
+            )
+        return self
 
 
 class OrderTrackRequest(BaseModel):

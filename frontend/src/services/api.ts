@@ -18,14 +18,16 @@ interface APIClientOptions {
 }
 
 class APIClient {
+  private baseUrl: string;
   private retryConfig: RetryConfig;
   private _getAuthHeaders?: () => Record<string, string>;
 
   constructor(
-    _baseUrl: string,
+    baseUrl: string,
     retryConfig?: Partial<RetryConfig>,
     options?: APIClientOptions,
   ) {
+    this.baseUrl = (baseUrl || "").replace(/\/$/, "");
     this._getAuthHeaders = options?.getAuthHeaders;
     this.retryConfig = {
       maxRetries: 3,
@@ -53,11 +55,19 @@ class APIClient {
     return Math.min(exponentialDelay + jitter, this.retryConfig.maxDelay);
   }
 
+  private resolveUrl(path: string): string {
+    if (!this.baseUrl) return path;
+    const base = this.baseUrl.replace(/\/$/, "");
+    const p = path.startsWith("/") ? path : `/${path}`;
+    return `${base}${p}`;
+  }
+
   private async fetchWithTimeout(
     url: string,
     options: RequestInit,
     timeout: number,
   ): Promise<Response> {
+    const resolvedUrl = this.resolveUrl(url);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
     const mergedHeaders = {
@@ -66,7 +76,7 @@ class APIClient {
     };
 
     try {
-      const response = await fetch(url, {
+      const response = await fetch(resolvedUrl, {
         ...options,
         headers: mergedHeaders,
         signal: controller.signal,
@@ -186,7 +196,10 @@ class APIClient {
     };
   }
 
-  async createSession(): Promise<{ session_id: string }> {
+  async createSession(): Promise<{
+    session_id: string;
+    session_token?: string;
+  }> {
     try {
       const response = await this.fetchWithTimeout(
         `/api/chat/session`,
@@ -203,7 +216,10 @@ class APIClient {
       }
 
       const data = await response.json();
-      return { session_id: data.session_id };
+      return {
+        session_id: data.session_id,
+        session_token: data.session_token,
+      };
     } catch (error) {
       console.error("Session creation error:", error);
       return { session_id: `temp-${Date.now()}` };
@@ -216,20 +232,47 @@ class APIClient {
     onChunk: (chunk: string) => void,
     onComplete: (response: ChatResponse) => void,
     onError: (error: Error) => void,
+    options?: { signal?: AbortSignal },
   ): Promise<void> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    const signal = options?.signal;
+    let readerRef: ReadableStreamDefaultReader<Uint8Array> | null = null;
+
+    const onAbort = () => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+      clearTimeout(timeoutId);
+      controller.abort();
+      if (readerRef) {
+        readerRef.cancel().catch(() => {});
+      }
+    };
+
+    if (signal) {
+      if (signal.aborted) {
+        clearTimeout(timeoutId);
+        onError(new Error("Stream was aborted"));
+        return;
+      }
+      signal.addEventListener("abort", onAbort);
+    }
+
     try {
-      const response = await this.fetchWithTimeout(
-        `/api/chat/stream`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            message,
-            session_id: sessionId,
-          }),
-        },
-        30000,
-      );
+      const resolvedUrl = this.resolveUrl("/api/chat/stream");
+      const mergedHeaders = {
+        ...this.getHeaders(),
+        "Content-Type": "application/json",
+      };
+
+      const response = await fetch(resolvedUrl, {
+        method: "POST",
+        headers: mergedHeaders,
+        body: JSON.stringify({
+          message,
+          session_id: sessionId,
+        }),
+        signal: controller.signal,
+      });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -241,6 +284,8 @@ class APIClient {
       if (!reader) {
         throw new Error("No response body");
       }
+
+      readerRef = reader;
 
       let buffer = "";
       let fullMessage = "";
@@ -278,8 +323,17 @@ class APIClient {
         }
       }
     } catch (error) {
-      console.error("Streaming error:", error);
-      onError(error instanceof Error ? error : new Error(String(error)));
+      const err = error instanceof Error ? error : new Error(String(error));
+      if (err.name === "AbortError") {
+        onError(err);
+      } else {
+        console.error("Streaming error:", error);
+        onError(err);
+      }
+    } finally {
+      readerRef = null;
+      if (signal) signal.removeEventListener("abort", onAbort);
+      clearTimeout(timeoutId);
     }
   }
 
@@ -418,11 +472,17 @@ class APIClient {
 
   // ── Order Tracking ───────────────────────────────────────────────
 
-  async getOrderTracking(orderId: string): Promise<TrackingResponse | null> {
+  async getOrderTracking(
+    orderId: string,
+    sessionId?: string,
+  ): Promise<TrackingResponse | null> {
     try {
+      const headers: Record<string, string> = {};
+      if (sessionId) headers["X-Session-ID"] = sessionId;
+
       const response = await this.fetchWithTimeout(
         `/api/orders/${orderId}/tracking`,
-        { method: "GET" },
+        { method: "GET", headers },
         this.retryConfig.timeout,
       );
 
@@ -519,10 +579,12 @@ class APIClient {
       quantity: number;
       subtotal: number;
     }>;
-  }): Promise<{ order_id: string; total_amount: number } | null> {
+  }): Promise<
+    { order_id: string; total_amount: number } | { error: string }
+  > {
     try {
       const response = await this.fetchWithTimeout(
-        `/api/orders/create`,
+        "/api/orders/create",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -531,11 +593,33 @@ class APIClient {
         this.retryConfig.timeout,
       );
 
-      if (!response.ok) return null;
-      const data = await response.json();
-      return { order_id: data.order_id, total_amount: data.total_amount };
-    } catch {
-      return null;
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const detail =
+          typeof data?.detail === "string"
+            ? data.detail
+            : Array.isArray(data?.detail)
+              ? data.detail.map((d: { msg?: string }) => d.msg).join(", ")
+              : "Order creation failed. Please try again.";
+        return { error: detail };
+      }
+
+      return {
+        order_id: data.order_id,
+        total_amount: data.total_amount,
+      };
+    } catch (err) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again.";
+      return {
+        error:
+          msg.includes("timeout") || msg.includes("Failed to fetch")
+            ? "Connection failed. Please check your network and try again."
+            : msg,
+      };
     }
   }
 }

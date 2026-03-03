@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useChatContext } from "../contexts/ChatContext";
 
 export interface CricketFilters {
@@ -100,7 +100,7 @@ const CricketFilterMegaMenu: React.FC<CricketFilterMegaMenuProps> = ({
   return (
     <div
       ref={menuRef}
-      className="absolute right-0 top-full mt-1 z-30 min-w-[340px] w-[380px] max-w-[min(90vw,420px)] bg-[#262626] border border-white/15 rounded-xl shadow-xl overflow-hidden"
+      className="absolute left-1/2 -translate-x-1/2 top-full mt-1 z-50 min-w-[340px] w-[380px] max-w-[min(90vw,420px)] bg-[#262626] border border-white/15 rounded-xl shadow-xl overflow-hidden"
       role="dialog"
       aria-label="Cricket filters"
     >
